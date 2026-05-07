@@ -7,7 +7,7 @@ export const imageModel: ImageModelDefinition = {
   mediaType: 'image',
   displayName: 'GPT Image 2',
   providerId: '666api',
-  description: '通过 666API 的 OpenAI 兼容 Images 接口调用 gpt-image-2',
+  description: '通过 666API 的 OpenAI 原生 Images 接口调用 gpt-image-2（支持参考图编辑）',
   eta: '1min',
   expectedDurationMs: 60000,
   defaultAspectRatio: '1:1',
@@ -30,7 +30,6 @@ export const imageModel: ImageModelDefinition = {
   ],
   resolveRequest: ({ referenceImageCount }) => ({
     requestModel: API666_GPT_IMAGE_2_MODEL_ID,
-    modeLabel: referenceImageCount > 0 ? '参考图不支持' : '生成模式',
+    modeLabel: referenceImageCount > 0 ? '编辑模式' : '生成模式',
   }),
 };
-

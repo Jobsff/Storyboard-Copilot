@@ -1,5 +1,6 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use reqwest::Client;
+use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
 use serde_json::json;
 use std::path::PathBuf;
@@ -84,6 +85,18 @@ struct Api666TaskImage {
     url: Option<Vec<String>>,
 }
 
+#[derive(Debug, Deserialize)]
+struct OpenAiImageResponse {
+    data: Option<Vec<OpenAiImageItem>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiImageItem {
+    #[serde(rename = "b64_json")]
+    b64_json: Option<String>,
+    url: Option<String>,
+}
+
 impl Api666Provider {
     pub fn new() -> Self {
         Self {
@@ -161,6 +174,63 @@ fn resolve_inline_image_payload(source: &str) -> Option<(String, String)> {
     Some((mime, STANDARD.encode(bytes)))
 }
 
+fn decode_image_bytes(source: &str) -> Result<Vec<u8>, AIError> {
+    let trimmed = source.trim();
+    if trimmed.is_empty() {
+        return Err(AIError::InvalidRequest("empty reference image".to_string()));
+    }
+
+    if let Some((meta, payload)) = trimmed.split_once(',') {
+        if meta.starts_with("data:") && meta.ends_with(";base64") && !payload.is_empty() {
+            let bytes = STANDARD
+                .decode(payload.as_bytes())
+                .map_err(|_| AIError::InvalidRequest("invalid base64 image payload".to_string()))?;
+            return Ok(bytes);
+        }
+    }
+
+    let path = if trimmed.starts_with("file://") {
+        PathBuf::from(decode_file_url_path(trimmed))
+    } else {
+        PathBuf::from(trimmed)
+    };
+    Ok(std::fs::read(path)?)
+}
+
+fn prepare_openai_edit_image_png(source: &str) -> Result<Vec<u8>, AIError> {
+    let bytes = decode_image_bytes(source)?;
+    let image = image::load_from_memory(&bytes)
+        .map_err(|err| AIError::InvalidRequest(format!("invalid image: {}", err)))?;
+
+    let (w, h) = image.dimensions();
+    let size = w.min(h);
+    let x = (w.saturating_sub(size)) / 2;
+    let y = (h.saturating_sub(size)) / 2;
+    let cropped = image.crop_imm(x, y, size, size);
+
+    let mut target = cropped;
+    if size > 1024 {
+        target = target.resize_exact(1024, 1024, image::imageops::FilterType::Lanczos3);
+    }
+
+    let mut out = Vec::new();
+    target.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)?;
+    if out.len() <= 4 * 1024 * 1024 {
+        return Ok(out);
+    }
+
+    let resized = target.resize_exact(512, 512, image::imageops::FilterType::Lanczos3);
+    let mut out2 = Vec::new();
+    resized.write_to(&mut std::io::Cursor::new(&mut out2), image::ImageFormat::Png)?;
+    if out2.len() <= 4 * 1024 * 1024 {
+        return Ok(out2);
+    }
+
+    Err(AIError::InvalidRequest(
+        "reference image too large after conversion".to_string(),
+    ))
+}
+
 fn extract_model_name(model: &str) -> Option<String> {
     let (provider, name) = model.split_once('/')?;
     if provider != "666api" {
@@ -205,30 +275,60 @@ fn resolve_openai_image_size(request_size: &str, aspect_ratio: &str) -> String {
     format!("{}x{}", w, h)
 }
 
+fn resolve_openai_edit_output_size(request_size: &str) -> &'static str {
+    match request_size.trim() {
+        "4K" | "2K" | "1K" => "1024x1024",
+        "0.5K" => "512x512",
+        _ => "1024x1024",
+    }
+}
+
 async fn submit_gpt_image_2_task(
     client: &Client,
     base_url: &str,
     api_key: &str,
     request: &GenerateRequest,
 ) -> Result<String, AIError> {
-    let endpoint = format!("{}/v1/images/generations", base_url);
-    let resolved_size = resolve_openai_image_size(&request.size, &request.aspect_ratio);
-    let body = json!({
-        "model": "gpt-image-2",
-        "prompt": request.prompt,
-        "n": 1,
-        "size": resolved_size
-    });
+    let images = request.reference_images.as_deref().unwrap_or(&[]);
+    let has_reference = !images.is_empty();
 
-    info!("[666API GPT-IMAGE-2] submit URL: {}", endpoint);
+    let response = if has_reference {
+        let endpoint = format!("{}/v1/images/edits", base_url);
+        let output_size = resolve_openai_edit_output_size(&request.size);
+        let png_bytes = prepare_openai_edit_image_png(&images[0])?;
+        let image_part = Part::bytes(png_bytes)
+            .file_name("image.png")
+            .mime_str("image/png")
+            .map_err(|_| AIError::InvalidRequest("invalid image mime type".to_string()))?;
+        let form = Form::new()
+            .part("image", image_part)
+            .text("prompt", request.prompt.clone())
+            .text("n", "1")
+            .text("size", output_size)
+            .text("response_format", "url")
+            .text("model", "gpt-image-2");
 
-    let response = client
-        .post(&endpoint)
-        .bearer_auth(api_key)
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await?;
+        info!("[666API GPT-IMAGE-2] edit URL: {}", endpoint);
+        client.post(&endpoint).bearer_auth(api_key).multipart(form).send().await?
+    } else {
+        let endpoint = format!("{}/v1/images/generations", base_url);
+        let resolved_size = resolve_openai_image_size(&request.size, &request.aspect_ratio);
+        let body = json!({
+            "model": "gpt-image-2",
+            "prompt": request.prompt,
+            "n": 1,
+            "size": resolved_size
+        });
+
+        info!("[666API GPT-IMAGE-2] generate URL: {}", endpoint);
+        client
+            .post(&endpoint)
+            .bearer_auth(api_key)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?
+    };
 
     if !response.status().is_success() {
         let status = response.status();
@@ -239,31 +339,53 @@ async fn submit_gpt_image_2_task(
         )));
     }
 
-    let result: Api666TaskSubmitResponse = response.json().await?;
-    if result.code.unwrap_or(200) != 200 {
-        return Err(AIError::Provider(format!(
-            "Unexpected submit response: {:?}",
-            result
-        )));
+    let raw_text = response.text().await.unwrap_or_default();
+    let json_value: serde_json::Value =
+        serde_json::from_str(&raw_text).unwrap_or_else(|_| serde_json::Value::String(raw_text));
+
+    if let Ok(result) = serde_json::from_value::<Api666TaskSubmitResponse>(json_value.clone()) {
+        if result.code.unwrap_or(200) == 200 {
+            let item = result
+                .data
+                .unwrap_or_default()
+                .into_iter()
+                .next()
+                .ok_or_else(|| AIError::Provider("No task_id in response".to_string()))?;
+            let task_id = item.task_id.unwrap_or_default().trim().to_string();
+            if task_id.is_empty() {
+                return Err(AIError::Provider("No task_id in response".to_string()));
+            }
+            return Ok(task_id);
+        }
     }
 
-    let item = result
-        .data
-        .unwrap_or_default()
-        .into_iter()
-        .next()
-        .ok_or_else(|| AIError::Provider("No task_id in response".to_string()))?;
-
-    let task_id = item
-        .task_id
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-    if task_id.is_empty() {
-        return Err(AIError::Provider("No task_id in response".to_string()));
+    if let Ok(result) = serde_json::from_value::<OpenAiImageResponse>(json_value.clone()) {
+        let item = result
+            .data
+            .unwrap_or_default()
+            .into_iter()
+            .next()
+            .ok_or_else(|| AIError::Provider("No image payload in response".to_string()))?;
+        if let Some(url) = item.url {
+            if !url.trim().is_empty() {
+                return Ok(url);
+            }
+        }
+        if let Some(b64) = item.b64_json {
+            if !b64.trim().is_empty() {
+                return Ok(format!("data:image/png;base64,{}", b64));
+            }
+        }
     }
 
-    Ok(task_id)
+    Err(AIError::Provider(format!(
+        "No task_id or image payload in response. raw={}",
+        if raw_text.len() > 2000 {
+            format!("{}...(truncated)", &raw_text[..2000])
+        } else {
+            raw_text
+        }
+    )))
 }
 
 async fn poll_gpt_task(
