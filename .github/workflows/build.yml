@@ -57,6 +57,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Generate Tauri icons
+        run: npx tauri icon ../logo.png
+
       - name: Build application
         run: npx tauri build
 
@@ -127,6 +130,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Generate Tauri icons
+        run: npx tauri icon ../logo.png
 
       - name: Build application (Universal Binary)
         env:

@@ -1030,14 +1030,9 @@ export function SettingsDialog({
                         className="h-14 w-14 rounded-lg border border-border-dark object-cover"
                       />
                       <div className="min-w-0 flex-1">
-                        <a
-                          href="https://space.bilibili.com/39337803"
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-base font-semibold text-accent hover:underline"
-                        >
+                        <span className="text-base font-semibold text-accent">
                           {t('settings.aboutAppName')}
-                        </a>
+                        </span>
                         <p className="mt-1 text-sm text-text-muted">
                           {t('settings.aboutIntro')}
                         </p>
@@ -1051,25 +1046,7 @@ export function SettingsDialog({
                     </p>
                     <p className="text-text-dark">
                       {t('settings.aboutAuthorLabel')}:{' '}
-                      <a
-                        href="https://space.bilibili.com/39337803"
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-accent hover:underline"
-                      >
-                        {t('settings.aboutAuthor')}
-                      </a>
-                    </p>
-                    <p className="text-text-dark">
-                      {t('settings.aboutRepositoryLabel')}:{' '}
-                      <a
-                        href="https://github.com/henjicc/Storyboard-Copilot"
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-accent hover:underline break-all"
-                      >
-                        https://github.com/henjicc/Storyboard-Copilot
-                      </a>
+                      <span className="text-text-muted">{t('settings.aboutAuthor')}</span>
                     </p>
                   </div>
 
