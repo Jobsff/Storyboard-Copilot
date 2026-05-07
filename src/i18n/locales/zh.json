@@ -171,6 +171,7 @@
     "success": "生成成功",
     "error": "生成失败",
     "autoPrompt": {
+      "generating": "反推提示词中...",
       "error": "反推提示词失败",
       "apiKeyRequired": "请在设置中填写 666API 的 API Key"
     }
@@ -186,6 +187,8 @@
     "rename": "重命名",
     "renameTitle": "重命名项目",
     "delete": "删除项目",
+    "deleteConfirmTitle": "删除项目",
+    "deleteConfirmDesc": "确定要删除这个项目吗？删除后无法恢复。",
     "created": "创建时间",
     "modified": "修改时间",
     "updatedAt": "更新时间",

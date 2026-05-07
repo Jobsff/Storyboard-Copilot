@@ -77,6 +77,7 @@ export interface ImageEditNodeData extends NodeImageData {
   requestAspectRatio?: string;
   extraParams?: Record<string, unknown>;
   autoPrompt?: boolean;
+  autoPromptRunning?: boolean;
   isGenerating?: boolean;
   generationStartedAt?: number | null;
   generationDurationMs?: number;

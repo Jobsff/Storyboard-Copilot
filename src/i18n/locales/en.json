@@ -171,6 +171,7 @@
     "success": "Generated successfully",
     "error": "Generation failed",
     "autoPrompt": {
+      "generating": "Reversing prompt...",
       "error": "Reverse prompt failed",
       "apiKeyRequired": "Please set 666API API key in Settings"
     }
@@ -186,6 +187,8 @@
     "rename": "Rename",
     "renameTitle": "Rename Project",
     "delete": "Delete Project",
+    "deleteConfirmTitle": "Delete project",
+    "deleteConfirmDesc": "Are you sure you want to delete this project? This action cannot be undone.",
     "created": "Created",
     "modified": "Modified",
     "updatedAt": "Updated",

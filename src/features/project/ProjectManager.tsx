@@ -4,7 +4,7 @@ import { Plus, FolderOpen, Pencil, Trash2 } from 'lucide-react';
 import { useProjectStore } from '@/stores/projectStore';
 import { getConfiguredApiKeyCount, useSettingsStore } from '@/stores/settingsStore';
 import { UI_CONTENT_OVERLAY_INSET_CLASS } from '@/components/ui/motion';
-import { UiButton, UiSelect } from '@/components/ui/primitives';
+import { UiButton, UiModal, UiSelect } from '@/components/ui/primitives';
 import { MissingApiKeyHint } from '@/features/settings/MissingApiKeyHint';
 import { listModelProviders } from '@/features/canvas/models';
 import { RenameDialog } from './RenameDialog';
@@ -17,6 +17,9 @@ export function ProjectManager() {
   const [showRenameDialog, setShowRenameDialog] = useState(false);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingProjectName, setEditingProjectName] = useState('');
+  const [pendingDeleteProject, setPendingDeleteProject] = useState<{ id: string; name: string } | null>(
+    null
+  );
   const [sortField, setSortField] = useState<ProjectSortField>('createdAt');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const providerIds = useMemo(() => listModelProviders().map((provider) => provider.id), []);
@@ -40,9 +43,9 @@ export function ProjectManager() {
     setShowRenameDialog(true);
   };
 
-  const handleDeleteClick = (id: string, e: React.MouseEvent) => {
+  const handleDeleteClick = (id: string, name: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    deleteProject(id);
+    setPendingDeleteProject({ id, name });
   };
 
   const handleConfirm = (name: string) => {
@@ -139,7 +142,7 @@ export function ProjectManager() {
                     </button>
                     <button
                       type="button"
-                      onClick={(e) => handleDeleteClick(project.id, e)}
+                      onClick={(e) => handleDeleteClick(project.id, project.name, e)}
                       className="p-1 hover:bg-bg-dark rounded"
                       title={t('project.delete')}
                     >
@@ -172,6 +175,42 @@ export function ProjectManager() {
         onClose={() => setShowRenameDialog(false)}
         onConfirm={handleConfirm}
       />
+
+      <UiModal
+        isOpen={Boolean(pendingDeleteProject)}
+        title={t('project.deleteConfirmTitle')}
+        onClose={() => setPendingDeleteProject(null)}
+        footer={
+          <>
+            <UiButton type="button" variant="muted" onClick={() => setPendingDeleteProject(null)}>
+              {t('common.cancel')}
+            </UiButton>
+            <UiButton
+              type="button"
+              variant="primary"
+              className="bg-red-500 hover:bg-red-500/85"
+              onClick={() => {
+                if (!pendingDeleteProject) {
+                  return;
+                }
+                deleteProject(pendingDeleteProject.id);
+                setPendingDeleteProject(null);
+              }}
+            >
+              {t('common.delete')}
+            </UiButton>
+          </>
+        }
+      >
+        <div className="space-y-2 text-sm">
+          <div className="text-text-dark">{t('project.deleteConfirmDesc')}</div>
+          {pendingDeleteProject?.name && (
+            <div className="rounded-lg border border-[rgba(255,255,255,0.12)] bg-bg-dark/60 px-3 py-2 text-text-dark">
+              {pendingDeleteProject.name}
+            </div>
+          )}
+        </div>
+      </UiModal>
     </div>
   );
 }

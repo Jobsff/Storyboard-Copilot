@@ -2,6 +2,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use reqwest::Client;
 use reqwest::multipart::{Form, Part};
 use image::GenericImageView;
+use image::ImageFormat;
 use serde::Deserialize;
 use serde_json::json;
 use std::path::PathBuf;
@@ -190,6 +191,31 @@ fn resolve_inline_image_payload(source: &str) -> Option<(String, String)> {
     Some((mime, STANDARD.encode(bytes)))
 }
 
+fn prepare_reverse_prompt_image_data_url(source: &str) -> Result<String, AIError> {
+    let (_mime, payload) = resolve_inline_image_payload(source)
+        .ok_or_else(|| AIError::InvalidRequest("invalid reverse prompt image".to_string()))?;
+    let bytes = STANDARD
+        .decode(payload.as_bytes())
+        .map_err(|_| AIError::InvalidRequest("invalid base64 image payload".to_string()))?;
+
+    let image = image::load_from_memory(&bytes)
+        .map_err(|err| AIError::InvalidRequest(format!("invalid image: {}", err)))?;
+    let (w, h) = image.dimensions();
+    let max_dim = 768_u32;
+    let resized = if w > max_dim || h > max_dim {
+        let scale = max_dim as f32 / (w.max(h) as f32);
+        let target_w = ((w as f32) * scale).round().max(1.0) as u32;
+        let target_h = ((h as f32) * scale).round().max(1.0) as u32;
+        image.resize_exact(target_w, target_h, image::imageops::FilterType::Lanczos3)
+    } else {
+        image
+    };
+
+    let mut out = Vec::new();
+    resized.write_to(&mut std::io::Cursor::new(&mut out), ImageFormat::Jpeg)?;
+    Ok(format!("data:image/jpeg;base64,{}", STANDARD.encode(out)))
+}
+
 async fn reverse_prompt_via_chat_completions(
     client: &Client,
     base_url: &str,
@@ -197,9 +223,7 @@ async fn reverse_prompt_via_chat_completions(
     image_source: &str,
     language: Option<&str>,
 ) -> Result<String, AIError> {
-    let (mime, payload) = resolve_inline_image_payload(image_source)
-        .ok_or_else(|| AIError::InvalidRequest("invalid reverse prompt image".to_string()))?;
-    let data_url = format!("data:{};base64,{}", mime, payload);
+    let data_url = prepare_reverse_prompt_image_data_url(image_source)?;
     let endpoint = format!("{}/v1/chat/completions", base_url);
     let resolved_language = language.unwrap_or("zh").trim().to_ascii_lowercase();
 

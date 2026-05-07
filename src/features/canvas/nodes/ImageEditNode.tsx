@@ -9,7 +9,7 @@ import {
   useRef,
 } from 'react';
 import { Handle, Position, useUpdateNodeInternals, type NodeProps } from '@xyflow/react';
-import { Sparkles } from 'lucide-react';
+import { LoaderCircle, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -433,6 +433,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
   useEffect(() => {
     if (!data.autoPrompt) {
       autoPromptRequestStartedRef.current = false;
+      updateNodeData(id, { autoPromptRunning: false });
       return;
     }
 
@@ -442,13 +443,13 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
 
     if ((promptDraftRef.current ?? '').trim()) {
       autoPromptRequestStartedRef.current = true;
-      updateNodeData(id, { autoPrompt: false });
+      updateNodeData(id, { autoPrompt: false, autoPromptRunning: false });
       return;
     }
 
     if (incomingImages.length === 0) {
       autoPromptRequestStartedRef.current = true;
-      updateNodeData(id, { autoPrompt: false });
+      updateNodeData(id, { autoPrompt: false, autoPromptRunning: false });
       return;
     }
 
@@ -462,11 +463,12 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
       const errorMessage = t('ai.autoPrompt.apiKeyRequired');
       setError(errorMessage);
       void showErrorDialog(errorMessage, t('common.error'));
-      updateNodeData(id, { autoPrompt: false });
+      updateNodeData(id, { autoPrompt: false, autoPromptRunning: false });
       return;
     }
 
     autoPromptRequestStartedRef.current = true;
+    updateNodeData(id, { autoPromptRunning: true });
     void (async () => {
       const runtimeDiagnostics = await getRuntimeDiagnostics();
       setError(null);
@@ -478,7 +480,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         });
         setPromptDraft(prompt);
         commitPromptDraft(prompt);
-        updateNodeData(id, { autoPrompt: false });
+        updateNodeData(id, { autoPrompt: false, autoPromptRunning: false });
       } catch (autoPromptError) {
         const resolvedError = resolveErrorContent(autoPromptError, t('ai.autoPrompt.error'));
         const generationDebugContext: GenerationDebugContext = {
@@ -507,7 +509,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
           resolvedError.details,
           reportText
         );
-        updateNodeData(id, { autoPrompt: false });
+        updateNodeData(id, { autoPrompt: false, autoPromptRunning: false });
       }
     })();
   }, [
@@ -855,10 +857,20 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
             onKeyDown={handlePromptKeyDown}
             onScroll={syncPromptHighlightScroll}
             onMouseDown={(event) => event.stopPropagation()}
-            placeholder={t('node.imageEdit.promptPlaceholder')}
+            placeholder={data.autoPromptRunning ? t('ai.autoPrompt.generating') : t('node.imageEdit.promptPlaceholder')}
+            disabled={Boolean(data.autoPromptRunning)}
             className="ui-scrollbar nodrag nowheel relative z-10 h-full w-full resize-none overflow-y-auto overflow-x-hidden border-none bg-transparent px-1 py-0.5 text-sm leading-6 text-transparent caret-text-dark outline-none placeholder:text-text-muted/80 focus:border-transparent whitespace-pre-wrap break-words"
             style={{ scrollbarGutter: 'stable' }}
           />
+
+          {data.autoPromptRunning && (
+            <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-bg-dark/55">
+              <div className="flex items-center gap-2 rounded-full border border-[rgba(255,255,255,0.14)] bg-surface-dark/80 px-3 py-1.5 text-sm text-text-dark">
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+                <span>{t('ai.autoPrompt.generating')}</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {showImagePicker && incomingImageItems.length > 0 && (
