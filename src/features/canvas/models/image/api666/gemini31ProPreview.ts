@@ -1,13 +1,13 @@
 import type { ImageModelDefinition } from '../../types';
 
-export const API666_GEMINI_PRO_PREVIEW_MODEL_ID = '666api/gemini-3.1-pro-preview';
+export const API666_GEMINI_PRO_IMAGE_PREVIEW_MODEL_ID = '666api/gemini-3-pro-image-preview';
 
 export const imageModel: ImageModelDefinition = {
-  id: API666_GEMINI_PRO_PREVIEW_MODEL_ID,
+  id: API666_GEMINI_PRO_IMAGE_PREVIEW_MODEL_ID,
   mediaType: 'image',
-  displayName: 'Gemini 3.1 Pro (Preview)',
+  displayName: 'Gemini 3 Pro Image (Preview)',
   providerId: '666api',
-  description: '通过 666API 聚合接口调用 Gemini Pro 预览模型（若接口未返回图片将提示失败）',
+  description: '通过 666API 聚合接口调用 Gemini 图像模型（image preview）',
   eta: '1min',
   expectedDurationMs: 80000,
   defaultAspectRatio: '1:1',
@@ -35,8 +35,7 @@ export const imageModel: ImageModelDefinition = {
     { value: '4K', label: '4K' },
   ],
   resolveRequest: ({ referenceImageCount }) => ({
-    requestModel: API666_GEMINI_PRO_PREVIEW_MODEL_ID,
+    requestModel: API666_GEMINI_PRO_IMAGE_PREVIEW_MODEL_ID,
     modeLabel: referenceImageCount > 0 ? '编辑模式' : '生成模式',
   }),
 };
-

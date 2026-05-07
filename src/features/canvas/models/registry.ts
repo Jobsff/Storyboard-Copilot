@@ -17,7 +17,11 @@ const modelModules = import.meta.glob<{ imageModel: ImageModelDefinition }>(
 const providers: ModelProviderDefinition[] = Object.values(providerModules)
   .map((module) => module.provider)
   .filter((provider): provider is ModelProviderDefinition => Boolean(provider))
-  .sort((a, b) => a.id.localeCompare(b.id));
+  .sort((a, b) => {
+    if (a.id === '666api') return -1;
+    if (b.id === '666api') return 1;
+    return a.id.localeCompare(b.id);
+  });
 
 const imageModels: ImageModelDefinition[] = Object.values(modelModules)
   .map((module) => module.imageModel)
@@ -31,7 +35,7 @@ const imageModelMap = new Map<string, ImageModelDefinition>(
   imageModels.map((model) => [model.id, model])
 );
 
-export const DEFAULT_IMAGE_MODEL_ID = 'kie/nano-banana-2';
+export const DEFAULT_IMAGE_MODEL_ID = '666api/gemini-3.1-flash-image-preview';
 
 const imageModelAliasMap = new Map<string, string>([
   ['gemini-3.1-flash', 'ppio/gemini-3.1-flash'],

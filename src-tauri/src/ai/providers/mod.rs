@@ -16,10 +16,10 @@ pub use api666::Api666Provider;
 
 pub fn build_default_providers() -> Vec<Arc<dyn AIProvider>> {
     vec![
+        Arc::new(Api666Provider::new()),
         Arc::new(PPIOProvider::new()),
         Arc::new(GrsaiProvider::new()),
         Arc::new(KieProvider::new()),
         Arc::new(FalProvider::new()),
-        Arc::new(Api666Provider::new()),
     ]
 }

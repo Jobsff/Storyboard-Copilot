@@ -5,10 +5,13 @@ use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tokio::time::{sleep, Duration};
 use tracing::info;
 
 use crate::ai::error::AIError;
-use crate::ai::{AIProvider, GenerateRequest};
+use crate::ai::{
+    AIProvider, GenerateRequest, ProviderTaskHandle, ProviderTaskPollResult, ProviderTaskSubmission,
+};
 
 pub struct Api666Provider {
     client: Client,
@@ -45,15 +48,40 @@ struct GeminiInlineData {
 }
 
 #[derive(Debug, Deserialize)]
-struct OpenAiImagesResponse {
-    data: Option<Vec<OpenAiImagesItem>>,
+struct Api666TaskSubmitResponse {
+    code: Option<i64>,
+    data: Option<Vec<Api666TaskSubmitItem>>,
 }
 
 #[derive(Debug, Deserialize)]
-struct OpenAiImagesItem {
-    #[serde(rename = "b64_json")]
-    b64_json: Option<String>,
-    url: Option<String>,
+struct Api666TaskSubmitItem {
+    status: Option<String>,
+    #[serde(rename = "task_id")]
+    task_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Api666TaskStatusResponse {
+    code: Option<i64>,
+    data: Option<Api666TaskStatusData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Api666TaskStatusData {
+    status: Option<String>,
+    result: Option<Api666TaskResult>,
+    error: Option<String>,
+    message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Api666TaskResult {
+    images: Option<Vec<Api666TaskImage>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Api666TaskImage {
+    url: Option<Vec<String>>,
 }
 
 impl Api666Provider {
@@ -160,6 +188,125 @@ fn resolve_openai_image_size(request_size: &str, aspect_ratio: &str) -> String {
     format!("{}x{}", w, h)
 }
 
+async fn submit_gpt_image_2_task(
+    client: &Client,
+    base_url: &str,
+    api_key: &str,
+    request: &GenerateRequest,
+) -> Result<String, AIError> {
+    let endpoint = format!("{}/v1/images/generations", base_url);
+    let resolved_size = resolve_openai_image_size(&request.size, &request.aspect_ratio);
+    let body = json!({
+        "model": "gpt-image-2",
+        "prompt": request.prompt,
+        "n": 1,
+        "size": resolved_size
+    });
+
+    info!("[666API GPT-IMAGE-2] submit URL: {}", endpoint);
+
+    let response = client
+        .post(&endpoint)
+        .bearer_auth(api_key)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(AIError::Provider(format!(
+            "API error {}: {}",
+            status, error_text
+        )));
+    }
+
+    let result: Api666TaskSubmitResponse = response.json().await?;
+    if result.code.unwrap_or(200) != 200 {
+        return Err(AIError::Provider(format!(
+            "Unexpected submit response: {:?}",
+            result
+        )));
+    }
+
+    let item = result
+        .data
+        .unwrap_or_default()
+        .into_iter()
+        .next()
+        .ok_or_else(|| AIError::Provider("No task_id in response".to_string()))?;
+
+    let task_id = item
+        .task_id
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if task_id.is_empty() {
+        return Err(AIError::Provider("No task_id in response".to_string()));
+    }
+
+    Ok(task_id)
+}
+
+async fn poll_gpt_task(
+    client: &Client,
+    base_url: &str,
+    api_key: &str,
+    task_id: &str,
+) -> Result<ProviderTaskPollResult, AIError> {
+    let endpoint = format!("{}/v1/tasks/{}", base_url, task_id);
+    let response = client
+        .get(&endpoint)
+        .bearer_auth(api_key)
+        .header("Content-Type", "application/json")
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(AIError::Provider(format!(
+            "API error {}: {}",
+            status, error_text
+        )));
+    }
+
+    let result: Api666TaskStatusResponse = response.json().await?;
+    let data = result
+        .data
+        .ok_or_else(|| AIError::Provider("Missing task status payload".to_string()))?;
+
+    let status = data.status.unwrap_or_default().to_ascii_lowercase();
+    if status == "completed" || status == "succeeded" || status == "success" {
+        let url = data
+            .result
+            .and_then(|result| result.images)
+            .and_then(|images| images.into_iter().next())
+            .and_then(|image| image.url)
+            .and_then(|urls| urls.into_iter().next())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if url.is_empty() {
+            return Ok(ProviderTaskPollResult::Failed(
+                "completed but missing image url".to_string(),
+            ));
+        }
+        return Ok(ProviderTaskPollResult::Succeeded(url));
+    }
+
+    if status == "failed" || status == "error" {
+        let message = data
+            .error
+            .or(data.message)
+            .unwrap_or_else(|| "task failed".to_string());
+        return Ok(ProviderTaskPollResult::Failed(message));
+    }
+
+    Ok(ProviderTaskPollResult::Running)
+}
+
 async fn generate_via_gemini_native(
     client: &Client,
     base_url: &str,
@@ -234,73 +381,6 @@ async fn generate_via_gemini_native(
     Ok(format!("data:{};base64,{}", mime, data))
 }
 
-async fn generate_via_openai_images(
-    client: &Client,
-    base_url: &str,
-    api_key: &str,
-    model_name: &str,
-    request: GenerateRequest,
-) -> Result<String, AIError> {
-    let images = request.reference_images.unwrap_or_default();
-    if !images.is_empty() {
-        return Err(AIError::InvalidRequest(
-            "该模型暂不支持参考图编辑，请移除参考图后重试".to_string(),
-        ));
-    }
-
-    let endpoint = format!("{}/v1/images/generations", base_url);
-    let resolved_size = resolve_openai_image_size(&request.size, &request.aspect_ratio);
-    let body = json!({
-        "model": model_name,
-        "prompt": request.prompt,
-        "size": resolved_size,
-        "response_format": "b64_json"
-    });
-
-    info!("[666API OpenAI Images] URL: {}", endpoint);
-
-    let response = client
-        .post(&endpoint)
-        .bearer_auth(api_key)
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let error_text = response.text().await.unwrap_or_default();
-        return Err(AIError::Provider(format!(
-            "API error {}: {}",
-            status, error_text
-        )));
-    }
-
-    let result: OpenAiImagesResponse = response.json().await?;
-    let item = result
-        .data
-        .unwrap_or_default()
-        .into_iter()
-        .next()
-        .ok_or_else(|| AIError::Provider("No image payload in response".to_string()))?;
-
-    if let Some(b64) = item.b64_json {
-        if b64.trim().is_empty() {
-            return Err(AIError::Provider("No image payload in response".to_string()));
-        }
-        return Ok(format!("data:image/png;base64,{}", b64));
-    }
-
-    if let Some(url) = item.url {
-        if url.trim().is_empty() {
-            return Err(AIError::Provider("No image payload in response".to_string()));
-        }
-        return Ok(url);
-    }
-
-    Err(AIError::Provider("No image payload in response".to_string()))
-}
-
 #[async_trait::async_trait]
 impl AIProvider for Api666Provider {
     fn name(&self) -> &str {
@@ -314,7 +394,7 @@ impl AIProvider for Api666Provider {
     fn list_models(&self) -> Vec<String> {
         vec![
             "666api/gemini-3.1-flash-image-preview".to_string(),
-            "666api/gemini-3.1-pro-preview".to_string(),
+            "666api/gemini-3-pro-image-preview".to_string(),
             "666api/gpt-image-2".to_string(),
         ]
     }
@@ -322,6 +402,58 @@ impl AIProvider for Api666Provider {
     async fn set_api_key(&self, api_key: String) -> Result<(), AIError> {
         Api666Provider::set_api_key(self, api_key).await;
         Ok(())
+    }
+
+    fn supports_task_resume(&self) -> bool {
+        true
+    }
+
+    async fn submit_task(&self, request: GenerateRequest) -> Result<ProviderTaskSubmission, AIError> {
+        let api_key = self
+            .api_key
+            .read()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| AIError::InvalidRequest("API key not set".to_string()))?;
+
+        let model_name = extract_model_name(&request.model)
+            .ok_or_else(|| AIError::ModelNotSupported(request.model.clone()))?;
+
+        if model_name == "gpt-image-2" {
+            let task_id =
+                submit_gpt_image_2_task(&self.client, &self.base_url, &api_key, &request).await?;
+            return Ok(ProviderTaskSubmission::Queued(ProviderTaskHandle {
+                task_id,
+                metadata: None,
+            }));
+        }
+
+        if model_name.starts_with("gemini-") {
+            let image_source = generate_via_gemini_native(
+                &self.client,
+                &self.base_url,
+                &api_key,
+                &model_name,
+                request,
+            )
+            .await?;
+            return Ok(ProviderTaskSubmission::Succeeded(image_source));
+        }
+
+        Err(AIError::ModelNotSupported(format!("666api/{}", model_name)))
+    }
+
+    async fn poll_task(&self, handle: ProviderTaskHandle) -> Result<ProviderTaskPollResult, AIError> {
+        let api_key = self
+            .api_key
+            .read()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| AIError::InvalidRequest("API key not set".to_string()))?;
+
+        poll_gpt_task(&self.client, &self.base_url, &api_key, &handle.task_id).await
     }
 
     async fn generate(&self, request: GenerateRequest) -> Result<String, AIError> {
@@ -348,14 +480,18 @@ impl AIProvider for Api666Provider {
         }
 
         if model_name == "gpt-image-2" {
-            return generate_via_openai_images(
-                &self.client,
-                &self.base_url,
-                &api_key,
-                &model_name,
-                request,
-            )
-            .await;
+            let task_id =
+                submit_gpt_image_2_task(&self.client, &self.base_url, &api_key, &request).await?;
+            for _ in 0..60 {
+                match poll_gpt_task(&self.client, &self.base_url, &api_key, &task_id).await? {
+                    ProviderTaskPollResult::Running => {
+                        sleep(Duration::from_secs(3)).await;
+                    }
+                    ProviderTaskPollResult::Succeeded(url) => return Ok(url),
+                    ProviderTaskPollResult::Failed(message) => return Err(AIError::TaskFailed(message)),
+                }
+            }
+            return Err(AIError::Provider("Task pending too long".to_string()));
         }
 
         Err(AIError::ModelNotSupported(format!(
