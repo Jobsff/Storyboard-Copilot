@@ -1,12 +1,13 @@
 import {
   generateImage,
   getGenerateImageJob,
+  reversePrompt,
   setApiKey,
   submitGenerateImageJob,
 } from '@/commands/ai';
 import { imageUrlToDataUrl, persistImageLocally } from '@/features/canvas/application/imageData';
 
-import type { AiGateway, GenerateImagePayload } from '../application/ports';
+import type { AiGateway, GenerateImagePayload, ReversePromptPayload } from '../application/ports';
 
 async function normalizeReferenceImages(payload: GenerateImagePayload): Promise<string[] | undefined> {
   const isKieModel = payload.model.startsWith('kie/');
@@ -48,4 +49,12 @@ export const tauriAiGateway: AiGateway = {
     });
   },
   getGenerateImageJob,
+  reversePrompt: async (provider: string, payload: ReversePromptPayload) => {
+    const normalizedImage = await persistImageLocally(payload.image);
+    return await reversePrompt({
+      provider,
+      image: normalizedImage,
+      language: payload.language,
+    });
+  },
 };

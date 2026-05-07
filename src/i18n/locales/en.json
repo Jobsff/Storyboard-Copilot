@@ -43,7 +43,8 @@
   "tool": {
     "crop": "Crop",
     "annotate": "Annotate",
-    "split": "Split"
+    "split": "Split",
+    "scale": "Scale"
   },
   "toolDialog": {
     "suffix": " Tool",
@@ -52,7 +53,13 @@
     "processing": "Processing...",
     "apply": "Apply",
     "cropResultTitle": "Crop Result",
-    "annotateResultTitle": "Annotation Result"
+    "annotateResultTitle": "Annotation Result",
+    "scaleResultTitle": "Scale Result"
+  },
+  "toolFields": {
+    "scale": {
+      "scalePercent": "Scale (%)"
+    }
   },
   "nodeToolbar": {
     "reupload": "Reupload",
@@ -90,7 +97,8 @@
       "aiImageGeneration": "AI Image",
       "storyboard": "Storyboard Node",
       "storyboardGen": "Storyboard Generation",
-      "textAnnotation": "Text Annotation"
+      "textAnnotation": "Text Annotation",
+      "autoPrompt": "Auto Reverse Prompt"
     },
     "imageNode": {
       "title": "Image Node",
@@ -161,7 +169,11 @@
     "prompt": "Prompt",
     "generating": "Generating...",
     "success": "Generated successfully",
-    "error": "Generation failed"
+    "error": "Generation failed",
+    "autoPrompt": {
+      "error": "Reverse prompt failed",
+      "apiKeyRequired": "Please set 666API API key in Settings"
+    }
   },
   "project": {
     "title": "Projects",

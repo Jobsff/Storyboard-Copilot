@@ -43,7 +43,8 @@
   "tool": {
     "crop": "裁剪",
     "annotate": "标注",
-    "split": "切割"
+    "split": "切割",
+    "scale": "缩放"
   },
   "toolDialog": {
     "suffix": "工具",
@@ -52,7 +53,13 @@
     "processing": "处理中...",
     "apply": "应用",
     "cropResultTitle": "裁剪结果",
-    "annotateResultTitle": "标注结果"
+    "annotateResultTitle": "标注结果",
+    "scaleResultTitle": "缩放结果"
+  },
+  "toolFields": {
+    "scale": {
+      "scalePercent": "缩放百分比"
+    }
   },
   "nodeToolbar": {
     "reupload": "重新上传",
@@ -90,7 +97,8 @@
       "aiImageGeneration": "AI 图片",
       "storyboard": "分镜节点",
       "storyboardGen": "分镜生成",
-      "textAnnotation": "文本注释"
+      "textAnnotation": "文本注释",
+      "autoPrompt": "自动反推提示词"
     },
     "imageNode": {
       "title": "图片节点",
@@ -161,7 +169,11 @@
     "prompt": "提示词",
     "generating": "生成中...",
     "success": "生成成功",
-    "error": "生成失败"
+    "error": "生成失败",
+    "autoPrompt": {
+      "error": "反推提示词失败",
+      "apiKeyRequired": "请在设置中填写 666API 的 API Key"
+    }
   },
   "project": {
     "title": "项目管理",

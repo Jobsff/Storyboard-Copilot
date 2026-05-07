@@ -56,6 +56,13 @@ export class CanvasToolProcessor implements ToolProcessor {
             options
           ),
         };
+      case NODE_TOOL_TYPES.scale:
+        return {
+          outputImageUrl: await this.scaleImage(
+            await persistImageLocally(sourceImageUrl),
+            options
+          ),
+        };
       default:
         throw new Error('不支持的工具类型');
     }
@@ -139,6 +146,31 @@ export class CanvasToolProcessor implements ToolProcessor {
       canvas.width,
       canvas.height
     );
+
+    return canvasToDataUrl(canvas);
+  }
+
+  private async scaleImage(sourceImage: string, options: Record<string, unknown>): Promise<string> {
+    const scalePercent = Number(options.scalePercent ?? 100);
+    const rawScale = scalePercent / 100;
+    const scale = Number.isFinite(rawScale) ? Math.min(4, Math.max(0.1, rawScale)) : 1;
+
+    const image = await loadImageElement(sourceImage);
+    const targetWidth = Math.max(1, Math.round(image.naturalWidth * scale));
+    const targetHeight = Math.max(1, Math.round(image.naturalHeight * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+
+    const context = canvas.getContext('2d');
+    if (!context) {
+      throw new Error('无法初始化画布');
+    }
+
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(image, 0, 0, targetWidth, targetHeight);
 
     return canvasToDataUrl(canvas);
   }

@@ -40,6 +40,11 @@ export interface GenerateImagePayload {
   extraParams?: Record<string, unknown>;
 }
 
+export interface ReversePromptPayload {
+  image: string;
+  language?: string;
+}
+
 export interface AiGateway {
   setApiKey: (provider: string, apiKey: string) => Promise<void>;
   generateImage: (payload: GenerateImagePayload) => Promise<string>;
@@ -50,6 +55,7 @@ export interface AiGateway {
     result?: string | null;
     error?: string | null;
   }>;
+  reversePrompt: (provider: string, payload: ReversePromptPayload) => Promise<string>;
 }
 
 export interface ImageSplitGateway {

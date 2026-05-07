@@ -124,6 +124,9 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     if (toolType === NODE_TOOL_TYPES.splitStoryboard) {
       return t('tool.split');
     }
+    if (toolType === NODE_TOOL_TYPES.scale) {
+      return t('tool.scale');
+    }
     return '';
   }, [t]);
 

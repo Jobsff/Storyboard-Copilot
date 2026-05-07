@@ -46,6 +46,12 @@ pub struct GenerateRequestDto {
     pub extra_params: Option<HashMap<String, Value>>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReversePromptRequestDto {
+    pub image: String,
+    pub language: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct GenerationJobStatusDto {
     pub job_id: String,
@@ -267,6 +273,19 @@ pub async fn set_api_key(provider: String, api_key: String) -> Result<(), String
 
     resolved_provider
         .set_api_key(api_key)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn reverse_prompt(provider: String, request: ReversePromptRequestDto) -> Result<String, String> {
+    let registry = get_registry();
+    let resolved_provider = registry
+        .get_provider(provider.as_str())
+        .ok_or_else(|| format!("Unknown provider: {}", provider))?;
+
+    resolved_provider
+        .reverse_prompt(request.image, request.language)
         .await
         .map_err(|error| error.to_string())
 }

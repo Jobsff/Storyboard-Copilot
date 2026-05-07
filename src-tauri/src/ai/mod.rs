@@ -70,6 +70,13 @@ pub trait AIProvider: Send + Sync {
         )))
     }
 
+    async fn reverse_prompt(&self, _image: String, _language: Option<String>) -> Result<String, AIError> {
+        Err(AIError::Provider(format!(
+            "Provider '{}' does not support reverse prompt",
+            self.name()
+        )))
+    }
+
     async fn generate(&self, request: GenerateRequest) -> Result<String, AIError>;
 }
 

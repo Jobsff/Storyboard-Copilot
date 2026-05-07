@@ -9,6 +9,12 @@ export interface GenerateRequest {
   extra_params?: Record<string, unknown>;
 }
 
+export interface ReversePromptRequest {
+  provider: string;
+  image: string;
+  language?: string;
+}
+
 export type GenerationJobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'not_found';
 
 export interface GenerationJobStatus {
@@ -60,6 +66,14 @@ function sanitizeGenerateRequestForLog(request: GenerateRequest): Record<string,
       truncateBase64Like(item)
     ),
     extra_params: request.extra_params ?? {},
+  };
+}
+
+function sanitizeReversePromptRequestForLog(request: ReversePromptRequest): Record<string, unknown> {
+  return {
+    provider: request.provider,
+    language: request.language ?? '',
+    image_preview: truncateBase64Like(request.image),
   };
 }
 
@@ -205,4 +219,60 @@ export async function getGenerateImageJob(jobId: string): Promise<GenerationJobS
 
 export async function listModels(): Promise<string[]> {
   return await invoke('list_models');
+}
+
+export async function reversePrompt(request: ReversePromptRequest): Promise<string> {
+  const startedAt = performance.now();
+  console.info('[AI] reverse_prompt request', {
+    ...sanitizeReversePromptRequestForLog(request),
+    tauri: isTauri(),
+  });
+
+  if (!isTauri()) {
+    throw new Error('当前不是 Tauri 容器环境，请使用 `npm run tauri dev` 启动');
+  }
+
+  try {
+    const rawResult = await invoke<unknown>('reverse_prompt', {
+      provider: request.provider,
+      request: {
+        image: request.image,
+        language: request.language,
+      },
+    });
+    if (typeof rawResult !== 'string') {
+      throw createErrorWithDetails(
+        'reverse_prompt returned non-string payload',
+        truncateText(
+          (() => {
+            try {
+              return JSON.stringify(rawResult, null, 2);
+            } catch {
+              return String(rawResult);
+            }
+          })(),
+          2000
+        )
+      );
+    }
+    const result = rawResult.trim();
+    if (!result) {
+      throw createErrorWithDetails('reverse_prompt returned empty content');
+    }
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    console.info('[AI] reverse_prompt success', { elapsedMs, length: result.length });
+    return result;
+  } catch (error) {
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    const normalizedError = normalizeInvokeError(error);
+    console.error('[AI] reverse_prompt failed', {
+      elapsedMs,
+      request: sanitizeReversePromptRequestForLog(request),
+      error,
+      normalizedError,
+    });
+    const commandError: ErrorWithDetails = new Error(normalizedError.message);
+    commandError.details = normalizedError.details;
+    throw commandError;
+  }
 }

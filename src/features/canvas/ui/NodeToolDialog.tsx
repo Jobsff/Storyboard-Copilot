@@ -183,6 +183,9 @@ export function NodeToolDialog() {
     if (toolType === NODE_TOOL_TYPES.splitStoryboard) {
       return t('tool.split');
     }
+    if (toolType === NODE_TOOL_TYPES.scale) {
+      return t('tool.scale');
+    }
     return '';
   }, [t]);
   const resolveResultNodeTitle = useCallback((toolType: NodeToolType | undefined) => {
@@ -191,6 +194,9 @@ export function NodeToolDialog() {
     }
     if (toolType === NODE_TOOL_TYPES.annotate) {
       return t('toolDialog.annotateResultTitle');
+    }
+    if (toolType === NODE_TOOL_TYPES.scale) {
+      return t('toolDialog.scaleResultTitle');
     }
     return EXPORT_RESULT_DISPLAY_NAME.generic;
   }, [t]);

@@ -98,6 +98,21 @@ struct OpenAiImageItem {
     url: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct OpenAiChatCompletionResponse {
+    choices: Option<Vec<OpenAiChatCompletionChoice>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiChatCompletionChoice {
+    message: Option<OpenAiChatCompletionMessage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAiChatCompletionMessage {
+    content: Option<String>,
+}
+
 impl Api666Provider {
     pub fn new() -> Self {
         Self {
@@ -173,6 +188,86 @@ fn resolve_inline_image_payload(source: &str) -> Option<(String, String)> {
 
     let bytes = std::fs::read(path).ok()?;
     Some((mime, STANDARD.encode(bytes)))
+}
+
+async fn reverse_prompt_via_chat_completions(
+    client: &Client,
+    base_url: &str,
+    api_key: &str,
+    image_source: &str,
+    language: Option<&str>,
+) -> Result<String, AIError> {
+    let (mime, payload) = resolve_inline_image_payload(image_source)
+        .ok_or_else(|| AIError::InvalidRequest("invalid reverse prompt image".to_string()))?;
+    let data_url = format!("data:{};base64,{}", mime, payload);
+    let endpoint = format!("{}/v1/chat/completions", base_url);
+    let resolved_language = language.unwrap_or("zh").trim().to_ascii_lowercase();
+
+    let system_text = if resolved_language == "en" {
+        "You are a prompt engineer. Given an image, output a single image-generation prompt. Output ONLY the prompt, no explanation, no quotes, no markdown."
+    } else {
+        "你是提示词工程师。根据图片内容输出一段可直接用于图像生成的提示词。只输出提示词本身，不要解释，不要加引号，不要使用 Markdown。"
+    };
+
+    let user_text = if resolved_language == "en" {
+        "Generate a prompt describing the image with style, composition, subject, lighting, and details. Output only the prompt."
+    } else {
+        "请根据图片生成提示词，包含主体、场景、风格、光照、构图、细节。只输出提示词本身。"
+    };
+
+    let body = json!({
+        "model": "qwen3-vl-flash",
+        "messages": [
+            {"role": "system", "content": system_text},
+            {"role": "user", "content": [
+                {"type": "text", "text": user_text},
+                {"type": "image_url", "image_url": {"url": data_url}}
+            ]}
+        ],
+        "temperature": 0.2,
+        "max_tokens": 512
+    });
+
+    info!("[666API QWEN3-VL] reverse prompt URL: {}", endpoint);
+    let response = client
+        .post(&endpoint)
+        .bearer_auth(api_key)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let raw = response.text().await.unwrap_or_default();
+        let trimmed = raw.trim();
+        let capped = if trimmed.len() > 2000 {
+            format!("{}...(truncated)", &trimmed[..2000])
+        } else {
+            trimmed.to_string()
+        };
+        return Err(AIError::Provider(format!(
+            "reverse_prompt failed (status {}): {}",
+            status, capped
+        )));
+    }
+
+    let raw_text = response.text().await.unwrap_or_default();
+    let parsed: OpenAiChatCompletionResponse = serde_json::from_str(&raw_text)
+        .map_err(|_| AIError::Provider(format!("invalid chat completion response: {}", raw_text)))?;
+    let content = parsed
+        .choices
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|choice| choice.message)
+        .filter_map(|message| message.content)
+        .next()
+        .unwrap_or_default();
+    let prompt = content.replace('\n', " ").trim().to_string();
+    if prompt.is_empty() {
+        return Err(AIError::Provider("reverse_prompt returned empty content".to_string()));
+    }
+    Ok(prompt)
 }
 
 fn decode_image_bytes(source: &str) -> Result<Vec<u8>, AIError> {
@@ -649,6 +744,25 @@ impl AIProvider for Api666Provider {
             .ok_or_else(|| AIError::InvalidRequest("API key not set".to_string()))?;
 
         poll_gpt_task(&self.client, &self.base_url, &api_key, &handle.task_id).await
+    }
+
+    async fn reverse_prompt(&self, image: String, language: Option<String>) -> Result<String, AIError> {
+        let api_key = self
+            .api_key
+            .read()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| AIError::InvalidRequest("API key not set".to_string()))?;
+
+        reverse_prompt_via_chat_completions(
+            &self.client,
+            &self.base_url,
+            &api_key,
+            &image,
+            language.as_deref(),
+        )
+        .await
     }
 
     async fn generate(&self, request: GenerateRequest) -> Result<String, AIError> {

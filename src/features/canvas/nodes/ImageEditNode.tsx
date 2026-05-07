@@ -234,6 +234,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
   const promptHighlightRef = useRef<HTMLDivElement>(null);
   const [promptDraft, setPromptDraft] = useState(() => data.prompt ?? '');
   const promptDraftRef = useRef(promptDraft);
+  const autoPromptRequestStartedRef = useRef(false);
   const [showImagePicker, setShowImagePicker] = useState(false);
   const [pickerCursor, setPickerCursor] = useState<number | null>(null);
   const [pickerActiveIndex, setPickerActiveIndex] = useState(0);
@@ -426,6 +427,98 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     selectedAspectRatio.value,
     selectedModel.id,
     selectedResolution.value,
+    updateNodeData,
+  ]);
+
+  useEffect(() => {
+    if (!data.autoPrompt) {
+      autoPromptRequestStartedRef.current = false;
+      return;
+    }
+
+    if (autoPromptRequestStartedRef.current) {
+      return;
+    }
+
+    if ((promptDraftRef.current ?? '').trim()) {
+      autoPromptRequestStartedRef.current = true;
+      updateNodeData(id, { autoPrompt: false });
+      return;
+    }
+
+    if (incomingImages.length === 0) {
+      autoPromptRequestStartedRef.current = true;
+      updateNodeData(id, { autoPrompt: false });
+      return;
+    }
+
+    if (data.isGenerating) {
+      return;
+    }
+
+    const apiKey = apiKeys['666api'] ?? '';
+    if (!apiKey) {
+      autoPromptRequestStartedRef.current = true;
+      const errorMessage = t('ai.autoPrompt.apiKeyRequired');
+      setError(errorMessage);
+      void showErrorDialog(errorMessage, t('common.error'));
+      updateNodeData(id, { autoPrompt: false });
+      return;
+    }
+
+    autoPromptRequestStartedRef.current = true;
+    void (async () => {
+      const runtimeDiagnostics = await getRuntimeDiagnostics();
+      setError(null);
+      try {
+        await canvasAiGateway.setApiKey('666api', apiKey);
+        const prompt = await canvasAiGateway.reversePrompt('666api', {
+          image: incomingImages[0],
+          language: i18n.language.startsWith('en') ? 'en' : 'zh',
+        });
+        setPromptDraft(prompt);
+        commitPromptDraft(prompt);
+        updateNodeData(id, { autoPrompt: false });
+      } catch (autoPromptError) {
+        const resolvedError = resolveErrorContent(autoPromptError, t('ai.autoPrompt.error'));
+        const generationDebugContext: GenerationDebugContext = {
+          sourceType: 'unknown',
+          providerId: '666api',
+          requestModel: 'qwen3-vl-flash',
+          prompt: '',
+          extraParams: {},
+          referenceImageCount: incomingImages.length,
+          referenceImagePlaceholders: createReferenceImagePlaceholders(incomingImages.length),
+          appVersion: runtimeDiagnostics.appVersion,
+          osName: runtimeDiagnostics.osName,
+          osVersion: runtimeDiagnostics.osVersion,
+          osBuild: runtimeDiagnostics.osBuild,
+          userAgent: runtimeDiagnostics.userAgent,
+        };
+        const reportText = buildGenerationErrorReport({
+          errorMessage: resolvedError.message,
+          errorDetails: resolvedError.details,
+          context: generationDebugContext,
+        });
+        setError(resolvedError.message);
+        void showErrorDialog(
+          resolvedError.message,
+          t('common.error'),
+          resolvedError.details,
+          reportText
+        );
+        updateNodeData(id, { autoPrompt: false });
+      }
+    })();
+  }, [
+    apiKeys,
+    commitPromptDraft,
+    data.autoPrompt,
+    data.isGenerating,
+    id,
+    incomingImages,
+    i18n.language,
+    t,
     updateNodeData,
   ]);
 

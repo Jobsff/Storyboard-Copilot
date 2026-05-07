@@ -76,7 +76,7 @@ export const splitStoryboardToolPlugin: CanvasToolPlugin = {
 
 export const scaleToolPlugin: CanvasToolPlugin = {
   type: NODE_TOOL_TYPES.scale,
-  label: '缩放',
+  label: 'Scale',
   icon: 'scale',
   editor: 'form',
   supportsNode: (node) => supportsImageSourceNode(node) && Boolean(node.data.imageUrl),
@@ -86,7 +86,8 @@ export const scaleToolPlugin: CanvasToolPlugin = {
   fields: [
     {
       key: 'scalePercent',
-      label: '缩放百分比',
+      label: 'Scale (%)',
+      labelKey: 'toolFields.scale.scalePercent',
       type: 'number',
       min: 10,
       max: 400,

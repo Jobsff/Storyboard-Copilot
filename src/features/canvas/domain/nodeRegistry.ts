@@ -110,7 +110,7 @@ const imageAutoPromptNodeDefinition: CanvasNodeDefinition<ImageEditNodeData> = {
   visibleInMenu: false,
   capabilities: {
     toolbar: true,
-    promptInput: false,
+    promptInput: true,
   },
   connectivity: {
     sourceHandle: true,
