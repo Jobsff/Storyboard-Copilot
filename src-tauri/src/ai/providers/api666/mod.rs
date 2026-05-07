@@ -284,6 +284,35 @@ fn resolve_openai_edit_output_size(request_size: &str) -> &'static str {
     }
 }
 
+fn format_api666_images_error(
+    status: reqwest::StatusCode,
+    error_text: &str,
+    has_reference: bool,
+) -> String {
+    let trimmed = error_text.trim();
+    let raw = if trimmed.len() > 1600 {
+        format!("{}...(truncated)", &trimmed[..1600])
+    } else {
+        trimmed.to_string()
+    };
+
+    if trimmed.contains("get_channel_failed") {
+        if has_reference {
+            return format!(
+                "gpt-image-2 图生图通道暂不可用（666api: get_channel_failed）。请稍后重试，或移除参考图改为文生图，或切换 Gemini 图片模型。原始响应: {}",
+                raw
+            );
+        }
+
+        return format!(
+            "gpt-image-2 通道暂不可用（666api: get_channel_failed）。请稍后重试或切换模型。原始响应: {}",
+            raw
+        );
+    }
+
+    format!("API error {}: {}", status, raw)
+}
+
 async fn submit_gpt_image_2_task(
     client: &Client,
     base_url: &str,
@@ -334,9 +363,10 @@ async fn submit_gpt_image_2_task(
     if !response.status().is_success() {
         let status = response.status();
         let error_text = response.text().await.unwrap_or_default();
-        return Err(AIError::Provider(format!(
-            "API error {}: {}",
-            status, error_text
+        return Err(AIError::Provider(format_api666_images_error(
+            status,
+            &error_text,
+            has_reference,
         )));
     }
 
@@ -408,9 +438,10 @@ async fn poll_gpt_task(
     if !response.status().is_success() {
         let status = response.status();
         let error_text = response.text().await.unwrap_or_default();
-        return Err(AIError::Provider(format!(
-            "API error {}: {}",
-            status, error_text
+        return Err(AIError::Provider(format_api666_images_error(
+            status,
+            &error_text,
+            false,
         )));
     }
 
@@ -443,7 +474,13 @@ async fn poll_gpt_task(
             .error
             .or(data.message)
             .unwrap_or_else(|| "task failed".to_string());
-        return Ok(ProviderTaskPollResult::Failed(message));
+        let normalized = if message.contains("get_channel_failed") {
+            "gpt-image-2 通道暂不可用（666api: get_channel_failed）。请稍后重试或切换模型。"
+                .to_string()
+        } else {
+            message
+        };
+        return Ok(ProviderTaskPollResult::Failed(normalized));
     }
 
     Ok(ProviderTaskPollResult::Running)
