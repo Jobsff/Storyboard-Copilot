@@ -346,13 +346,26 @@ async fn generate_via_gemini_native(
         }
     }
 
+    let image_size = match request.size.trim() {
+        "4K" => "4K",
+        "2K" => "2K",
+        "1K" => "1K",
+        "0.5K" => "1K",
+        other if other.is_empty() => "1K",
+        _ => "1K",
+    };
+
     let body = json!({
         "contents": [{
             "role": "user",
             "parts": parts
         }],
         "generationConfig": {
-            "aspectRatio": request.aspect_ratio
+            "responseModalities": ["TEXT", "IMAGE"],
+            "imageConfig": {
+                "aspectRatio": request.aspect_ratio,
+                "imageSize": image_size
+            }
         }
     });
 
