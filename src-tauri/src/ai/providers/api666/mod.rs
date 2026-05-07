@@ -1,6 +1,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use reqwest::Client;
 use reqwest::multipart::{Form, Part};
+use image::GenericImageView;
 use serde::Deserialize;
 use serde_json::json;
 use std::path::PathBuf;
@@ -340,8 +341,10 @@ async fn submit_gpt_image_2_task(
     }
 
     let raw_text = response.text().await.unwrap_or_default();
-    let json_value: serde_json::Value =
-        serde_json::from_str(&raw_text).unwrap_or_else(|_| serde_json::Value::String(raw_text));
+    let json_value: serde_json::Value = match serde_json::from_str(&raw_text) {
+        Ok(value) => value,
+        Err(_) => serde_json::Value::String(raw_text.clone()),
+    };
 
     if let Ok(result) = serde_json::from_value::<Api666TaskSubmitResponse>(json_value.clone()) {
         if result.code.unwrap_or(200) == 200 {
