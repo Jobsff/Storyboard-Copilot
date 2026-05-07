@@ -184,11 +184,9 @@ async fn generate_via_gemini_native(
 
     let body = json!({
         "contents": [{
+            "role": "user",
             "parts": parts
-        }],
-        "generationConfig": {
-            "responseMimeType": "image/png"
-        }
+        }]
     });
 
     info!("[666API Gemini] URL: {}", endpoint);
