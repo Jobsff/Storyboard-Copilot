@@ -37,6 +37,7 @@ interface SettingsState {
   canvasEdgeRoutingMode: CanvasEdgeRoutingMode;
   autoCheckAppUpdateOnLaunch: boolean;
   enableUpdateDialog: boolean;
+  setHydrated: (hydrated: boolean) => void;
   setProviderApiKey: (providerId: string, key: string) => void;
   setGrsaiNanoBananaProModel: (model: string) => void;
   setHideProviderGuidePopover: (hide: boolean) => void;
@@ -184,6 +185,7 @@ export const useSettingsStore = create<SettingsState>()(
       canvasEdgeRoutingMode: 'spline',
       autoCheckAppUpdateOnLaunch: true,
       enableUpdateDialog: true,
+      setHydrated: (hydrated) => set({ isHydrated: hydrated }),
       setProviderApiKey: (providerId, key) =>
         set((state) => ({
           apiKeys: {
@@ -238,11 +240,11 @@ export const useSettingsStore = create<SettingsState>()(
       name: 'settings-storage',
       version: 10,
       onRehydrateStorage: () => {
-        return (_state, error) => {
+        return (state, error) => {
           if (error) {
             console.error('failed to hydrate settings storage', error);
           }
-          useSettingsStore.setState({ isHydrated: true });
+          state?.setHydrated(true);
         };
       },
       migrate: (persistedState: unknown) => {

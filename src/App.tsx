@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, isTauri } from '@tauri-apps/api/core';
 import { Canvas } from './features/canvas/Canvas';
 import { TitleBar } from './components/TitleBar';
 import { SettingsDialog } from './components/SettingsDialog';
@@ -104,6 +104,9 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
     let cancelled = false;
     let retryTimer: ReturnType<typeof window.setTimeout> | null = null;
 
