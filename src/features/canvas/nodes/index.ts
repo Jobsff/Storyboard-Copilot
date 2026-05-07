@@ -12,6 +12,7 @@ export const nodeTypes: NodeTypes = {
   exportImageNode: ImageNode,
   groupNode: GroupNode,
   imageNode: ImageEditNode,
+  imageAutoPromptNode: ImageEditNode,
   storyboardGenNode: StoryboardGenNode,
   storyboardNode: StoryboardNode,
   textAnnotationNode: TextAnnotationNode,

@@ -103,6 +103,41 @@ const imageEditNodeDefinition: CanvasNodeDefinition<ImageEditNodeData> = {
   }),
 };
 
+const imageAutoPromptNodeDefinition: CanvasNodeDefinition<ImageEditNodeData> = {
+  type: CANVAS_NODE_TYPES.imageAutoPrompt,
+  menuLabelKey: 'node.menu.autoPrompt',
+  menuIcon: 'sparkles',
+  visibleInMenu: false,
+  capabilities: {
+    toolbar: true,
+    promptInput: false,
+  },
+  connectivity: {
+    sourceHandle: true,
+    targetHandle: true,
+    connectMenu: {
+      fromSource: true,
+      fromTarget: false,
+    },
+  },
+  createDefaultData: () => ({
+    displayName: DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.imageEdit],
+    imageUrl: null,
+    previewImageUrl: null,
+    aspectRatio: DEFAULT_ASPECT_RATIO,
+    isSizeManuallyAdjusted: false,
+    requestAspectRatio: AUTO_REQUEST_ASPECT_RATIO,
+    prompt: '',
+    model: DEFAULT_IMAGE_MODEL_ID,
+    size: '2K' as ImageSize,
+    extraParams: {},
+    autoPrompt: true,
+    isGenerating: false,
+    generationStartedAt: null,
+    generationDurationMs: 60000,
+  }),
+};
+
 const exportImageNodeDefinition: CanvasNodeDefinition<ExportImageNodeData> = {
   type: CANVAS_NODE_TYPES.exportImage,
   menuLabelKey: 'node.menu.uploadImage',
@@ -254,6 +289,7 @@ const storyboardGenNodeDefinition: CanvasNodeDefinition<StoryboardGenNodeData> =
 export const canvasNodeDefinitions: Record<CanvasNodeType, CanvasNodeDefinition> = {
   [CANVAS_NODE_TYPES.upload]: uploadNodeDefinition,
   [CANVAS_NODE_TYPES.imageEdit]: imageEditNodeDefinition,
+  [CANVAS_NODE_TYPES.imageAutoPrompt]: imageAutoPromptNodeDefinition,
   [CANVAS_NODE_TYPES.exportImage]: exportImageNodeDefinition,
   [CANVAS_NODE_TYPES.textAnnotation]: textAnnotationNodeDefinition,
   [CANVAS_NODE_TYPES.group]: groupNodeDefinition,

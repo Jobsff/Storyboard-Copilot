@@ -74,8 +74,32 @@ export const splitStoryboardToolPlugin: CanvasToolPlugin = {
     await context.processTool(NODE_TOOL_TYPES.splitStoryboard, sourceImageUrl, options),
 };
 
+export const scaleToolPlugin: CanvasToolPlugin = {
+  type: NODE_TOOL_TYPES.scale,
+  label: '缩放',
+  icon: 'scale',
+  editor: 'form',
+  supportsNode: (node) => supportsImageSourceNode(node) && Boolean(node.data.imageUrl),
+  createInitialOptions: () => ({
+    scalePercent: 100,
+  }),
+  fields: [
+    {
+      key: 'scalePercent',
+      label: '缩放百分比',
+      type: 'number',
+      min: 10,
+      max: 400,
+      step: 5,
+    },
+  ],
+  execute: async (sourceImageUrl, options, context) =>
+    await context.processTool(NODE_TOOL_TYPES.scale, sourceImageUrl, options),
+};
+
 export const builtInToolPlugins: CanvasToolPlugin[] = [
   cropToolPlugin,
   annotateToolPlugin,
   splitStoryboardToolPlugin,
+  scaleToolPlugin,
 ];

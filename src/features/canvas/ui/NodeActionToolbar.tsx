@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NodeToolbar as ReactFlowNodeToolbar } from '@xyflow/react';
-import { Copy, Crop, Download, FolderOpen, PenLine, RefreshCw, Scissors, Trash2, Unlink2 } from 'lucide-react';
+import { Copy, Crop, Download, FolderOpen, PenLine, RefreshCw, Scissors, Trash2, Unlink2, ZoomIn } from 'lucide-react';
 import { save } from '@tauri-apps/plugin-dialog';
 import { useTranslation } from 'react-i18next';
 
@@ -44,6 +44,7 @@ const toolIconMap: Record<ToolIconKey, typeof Crop> = {
   crop: Crop,
   annotate: PenLine,
   split: Scissors,
+  scale: ZoomIn,
 };
 
 const TOOLBAR_BUTTON_RADIUS_CLASS = 'rounded-full';

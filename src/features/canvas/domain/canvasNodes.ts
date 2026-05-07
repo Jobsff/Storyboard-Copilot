@@ -3,6 +3,7 @@ import type { Edge, Node, XYPosition } from '@xyflow/react';
 export const CANVAS_NODE_TYPES = {
   upload: 'uploadNode',
   imageEdit: 'imageNode',
+  imageAutoPrompt: 'imageAutoPromptNode',
   exportImage: 'exportImageNode',
   textAnnotation: 'textAnnotationNode',
   group: 'groupNode',
@@ -75,6 +76,7 @@ export interface ImageEditNodeData extends NodeImageData {
   size: ImageSize;
   requestAspectRatio?: string;
   extraParams?: Record<string, unknown>;
+  autoPrompt?: boolean;
   isGenerating?: boolean;
   generationStartedAt?: number | null;
   generationDurationMs?: number;
@@ -169,6 +171,7 @@ export const NODE_TOOL_TYPES = {
   crop: 'crop',
   annotate: 'annotate',
   splitStoryboard: 'split-storyboard',
+  scale: 'scale',
 } as const;
 
 export type NodeToolType = (typeof NODE_TOOL_TYPES)[keyof typeof NODE_TOOL_TYPES];
