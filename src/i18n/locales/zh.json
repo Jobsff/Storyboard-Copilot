@@ -1,7 +1,7 @@
 {
   "app": {
-    "title": "分镜助手",
-    "subtitle": "Storyboard Copilot"
+    "title": "巨游美术工坊",
+    "subtitle": "巨游美术工坊"
   },
   "common": {
     "save": "保存",
@@ -311,4 +311,3 @@
     "copyReport": "复制报错信息"
   }
 }
-

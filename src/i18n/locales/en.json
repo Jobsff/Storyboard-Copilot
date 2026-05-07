@@ -1,7 +1,7 @@
 {
   "app": {
-    "title": "Storyboard Copilot",
-    "subtitle": "AI Storyboard Tool"
+    "title": "Juyou Art Workshop",
+    "subtitle": "Juyou Art Workshop"
   },
   "common": {
     "save": "Save",
@@ -311,4 +311,3 @@
     "copyReport": "Copy error report"
   }
 }
-

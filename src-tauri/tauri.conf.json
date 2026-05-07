@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "分镜助手",
+  "productName": "巨游美术工坊",
   "version": "0.1.13",
   "identifier": "com.storyboard.copilot",
   "build": {
@@ -16,7 +16,7 @@
       {
         "label": "main",
         "create": false,
-        "title": "分镜助手 Storyboard-Copilot",
+        "title": "巨游美术工坊",
         "dragDropEnabled": false,
         "width": 1280,
         "height": 800,

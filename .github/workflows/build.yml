@@ -63,7 +63,7 @@ jobs:
       - name: Rename Windows installer
         shell: pwsh
         run: |
-          $RELEASE_APP_NAME = "Storyboard-Copilot"
+          $RELEASE_APP_NAME = "巨游美术工坊"
           if ($env:GITHUB_REF -like 'refs/tags/v*') {
             $VERSION = $env:GITHUB_REF -replace 'refs/tags/v', ''
           } elseif ("${{ github.event.inputs.release_tag }}" -like 'v*') {
@@ -136,7 +136,7 @@ jobs:
 
       - name: Rename macOS DMG
         run: |
-          RELEASE_APP_NAME="Storyboard-Copilot"
+          RELEASE_APP_NAME="巨游美术工坊"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             VERSION=${GITHUB_REF#refs/tags/v}
           elif [[ "${{ github.event.inputs.release_tag }}" == v* ]]; then

@@ -174,17 +174,34 @@ fn extract_model_name(model: &str) -> Option<String> {
 }
 
 fn resolve_openai_image_size(request_size: &str, aspect_ratio: &str) -> String {
-    let (w, h) = match aspect_ratio.trim() {
-        "16:9" | "3:2" | "4:3" | "5:4" => (1536, 1024),
-        "9:16" | "2:3" | "3:4" | "4:5" => (1024, 1536),
-        _ => {
-            if request_size.trim() == "4K" {
-                (1536, 1536)
-            } else {
-                (1024, 1024)
-            }
+    let base = match request_size.trim() {
+        "4K" => 4096,
+        "2K" => 2048,
+        "1K" => 1024,
+        "0.5K" => 512,
+        _ => 1024,
+    };
+
+    let ratio = {
+        let trimmed = aspect_ratio.trim();
+        let mut parts = trimmed.split(':');
+        let w = parts.next().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
+        let h = parts.next().and_then(|v| v.parse::<f32>().ok()).unwrap_or(1.0);
+        if w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 {
+            w / h
+        } else {
+            1.0
         }
     };
+
+    let (w, h) = if ratio > 1.18 {
+        (base * 3 / 2, base)
+    } else if ratio < 0.85 {
+        (base, base * 3 / 2)
+    } else {
+        (base, base)
+    };
+
     format!("{}x{}", w, h)
 }
 
@@ -333,7 +350,10 @@ async fn generate_via_gemini_native(
         "contents": [{
             "role": "user",
             "parts": parts
-        }]
+        }],
+        "generationConfig": {
+            "aspectRatio": request.aspect_ratio
+        }
     });
 
     info!("[666API Gemini] URL: {}", endpoint);

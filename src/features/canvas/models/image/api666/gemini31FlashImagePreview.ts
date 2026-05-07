@@ -11,7 +11,7 @@ export const imageModel: ImageModelDefinition = {
   eta: '1min',
   expectedDurationMs: 60000,
   defaultAspectRatio: '1:1',
-  defaultResolution: '2K',
+  defaultResolution: '1K',
   aspectRatios: [
     { value: '1:1', label: '1:1' },
     { value: '1:4', label: '1:4' },
@@ -31,12 +31,9 @@ export const imageModel: ImageModelDefinition = {
   resolutions: [
     { value: '0.5K', label: '0.5K' },
     { value: '1K', label: '1K' },
-    { value: '2K', label: '2K' },
-    { value: '4K', label: '4K' },
   ],
   resolveRequest: ({ referenceImageCount }) => ({
     requestModel: API666_GEMINI_FLASH_IMAGE_PREVIEW_MODEL_ID,
     modeLabel: referenceImageCount > 0 ? '编辑模式' : '生成模式',
   }),
 };
-
