@@ -240,7 +240,7 @@ async fn reverse_prompt_via_chat_completions(
     };
 
     let body = json!({
-        "model": "qwen3-vl-flash",
+        "model": "gemini-3.1-flash-image-preview",
         "messages": [
             {"role": "system", "content": system_text},
             {"role": "user", "content": [
@@ -252,7 +252,7 @@ async fn reverse_prompt_via_chat_completions(
         "max_tokens": 512
     });
 
-    info!("[666API QWEN3-VL] reverse prompt URL: {}", endpoint);
+    info!("[666API GEMINI-3.1-FLASH-IMAGE-PREVIEW] reverse prompt URL: {}", endpoint);
     let response = client
         .post(&endpoint)
         .bearer_auth(api_key)
