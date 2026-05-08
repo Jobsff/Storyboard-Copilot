@@ -39,6 +39,7 @@ imageproc = "0.26.1"
 ab_glyph = "0.2.32"
 png = "0.17"
 urlencoding = "2"
+zip = "2"
 
 [profile.dev]
 opt-level = 1

@@ -180,6 +180,13 @@
     "title": "Projects",
     "newProject": "New Project",
     "newProjectTitle": "New Project",
+    "importProject": "Import Project",
+    "exportProject": "Export Project",
+    "packageFileType": "Project Package",
+    "importFailedTitle": "Import failed",
+    "importFailed": "Failed to import project package",
+    "exportFailedTitle": "Export failed",
+    "exportFailed": "Failed to export project package",
     "open": "Open Project",
     "save": "Save Project",
     "name": "Project Name",
@@ -301,6 +308,55 @@
     "checkUpdateHasUpdate": "New version detected.",
     "checkUpdateUpToDate": "You are on the latest version.",
     "checkUpdateFailed": "Update check failed. Please try again later."
+  },
+  "style": {
+    "menu": "Styles",
+    "category": {
+      "uiIcon": "UI Icons",
+      "uiPanel": "UI Buttons & Panels",
+      "avatar": "Avatars",
+      "character": "Character Art",
+      "monster": "Monsters",
+      "prop": "Props",
+      "scene": "Scenes"
+    },
+    "item": {
+      "uiIcon": {
+        "chibiOutlineThickPaint": "Chibi Outline Icon",
+        "flatSymbolic": "Flat Symbolic Icon"
+      },
+      "uiPanel": {
+        "flatRoundedOutline": "Flat Rounded Button",
+        "thickPaintPanelLightDecor": "Painted Panel"
+      },
+      "avatar": {
+        "chibiBigHead": "Chibi Big-Head Avatar",
+        "animeCelClean": "Cel-Shaded Avatar"
+      },
+      "character": {
+        "chibiThickPaint": "Chibi Painted Character",
+        "celActionPose": "Cel-Shaded Action Pose"
+      },
+      "monster": {
+        "chibiStrongSilhouette": "Chibi Strong Silhouette",
+        "celThreatClean": "Cel-Shaded Monster"
+      },
+      "prop": {
+        "thickPaintMaterialClear": "Painted Material Prop",
+        "flatSymbolic": "Flat Symbolic Prop"
+      },
+      "scene": {
+        "chibiIsometric": "Chibi Isometric Scene",
+        "flatModular": "Flat Modular Scene"
+      }
+    },
+    "dialog": {
+      "title": "Style Prompt",
+      "subject": "Subject",
+      "subjectPlaceholder": "e.g. A chibi mushroom monster avatar with a red-white cap",
+      "preview": "Prompt Preview (read-only)",
+      "create": "Create"
+    }
   },
   "pricing": {
     "nativePrice": "Native: {{value}}",

@@ -1,10 +1,16 @@
 use std::path::PathBuf;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::{Read, Write};
+use std::path::Path;
 use std::time::Duration;
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
+use uuid::Uuid;
+use zip::{ZipArchive, ZipWriter};
+use zip::write::SimpleFileOptions;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +34,25 @@ pub struct ProjectRecord {
     pub edges_json: String,
     pub viewport_json: String,
     pub history_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectPackageRecord {
+    pub name: String,
+    pub node_count: i64,
+    pub nodes_json: String,
+    pub edges_json: String,
+    pub viewport_json: String,
+    pub history_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectPackageV1 {
+    pub format_version: u32,
+    pub exported_at: i64,
+    pub project: ProjectPackageRecord,
 }
 
 fn resolve_db_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -240,6 +265,13 @@ fn prune_unreferenced_images(app: &AppHandle) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn now_timestamp_ms() -> i64 {
+    let now = std::time::SystemTime::now();
+    now.duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 fn open_db(app: &AppHandle) -> Result<Connection, String> {
@@ -461,4 +493,312 @@ pub fn delete_project_record(app: AppHandle, project_id: String) -> Result<(), S
 
     prune_unreferenced_images(&app)?;
     Ok(())
+}
+
+fn update_image_field_if_needed(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    image_name_to_path: &HashMap<String, String>,
+) {
+    const IMAGE_REF_PREFIX: &str = "__img_ref__:";
+
+    let Some(value) = obj.get(key) else {
+        return;
+    };
+    let Some(raw) = value.as_str() else {
+        return;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.starts_with(IMAGE_REF_PREFIX) {
+        return;
+    }
+
+    let Some(filename) = Path::new(trimmed)
+        .file_name()
+        .and_then(|item| item.to_str())
+        .map(|item| item.to_string())
+    else {
+        return;
+    };
+
+    let Some(next) = image_name_to_path.get(&filename) else {
+        return;
+    };
+
+    obj.insert(key.to_string(), serde_json::Value::String(next.clone()));
+}
+
+fn rewrite_nodes_value_image_paths(
+    nodes_value: &mut serde_json::Value,
+    image_name_to_path: &HashMap<String, String>,
+) {
+    let Some(nodes) = nodes_value.as_array_mut() else {
+        return;
+    };
+
+    for node in nodes {
+        let Some(node_obj) = node.as_object_mut() else {
+            continue;
+        };
+        let Some(data) = node_obj.get_mut("data").and_then(|value| value.as_object_mut()) else {
+            continue;
+        };
+
+        for key in ["imageUrl", "previewImageUrl"] {
+            update_image_field_if_needed(data, key, image_name_to_path);
+        }
+
+        if let Some(frames) = data.get_mut("frames").and_then(|value| value.as_array_mut()) {
+            for frame in frames {
+                let Some(frame_obj) = frame.as_object_mut() else {
+                    continue;
+                };
+                for key in ["imageUrl", "previewImageUrl"] {
+                    update_image_field_if_needed(frame_obj, key, image_name_to_path);
+                }
+            }
+        }
+    }
+}
+
+fn rewrite_history_value_image_paths(
+    history_value: &mut serde_json::Value,
+    images_dir: &Path,
+    image_name_to_path: &HashMap<String, String>,
+) {
+    if let Some(pool) = history_value.get_mut("imagePool").and_then(|value| value.as_array_mut()) {
+        for item in pool.iter_mut() {
+            let Some(raw) = item.as_str() else {
+                continue;
+            };
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let Some(filename) = Path::new(trimmed)
+                .file_name()
+                .and_then(|name| name.to_str())
+            else {
+                continue;
+            };
+            let next_path = images_dir.join(filename).to_string_lossy().to_string();
+            *item = serde_json::Value::String(next_path);
+        }
+    }
+
+    for timeline_key in ["past", "future"] {
+        let Some(timeline) = history_value.get_mut(timeline_key).and_then(|value| value.as_array_mut()) else {
+            continue;
+        };
+
+        for snapshot in timeline {
+            let Some(nodes) = snapshot.get_mut("nodes") else {
+                continue;
+            };
+            rewrite_nodes_value_image_paths(nodes, image_name_to_path);
+        }
+    }
+}
+
+fn rewrite_project_image_paths_for_import(
+    nodes_json: &str,
+    history_json: &str,
+    images_dir: &Path,
+    image_names: &HashSet<String>,
+) -> Result<(String, String, i64), String> {
+    let mut image_name_to_path = HashMap::new();
+    for name in image_names {
+        image_name_to_path.insert(name.clone(), images_dir.join(name).to_string_lossy().to_string());
+    }
+
+    let mut parsed_nodes: serde_json::Value =
+        serde_json::from_str(nodes_json).unwrap_or_else(|_| serde_json::Value::Array(Vec::new()));
+    rewrite_nodes_value_image_paths(&mut parsed_nodes, &image_name_to_path);
+
+    let node_count = parsed_nodes.as_array().map(|nodes| nodes.len() as i64).unwrap_or(0);
+
+    let mut parsed_history: serde_json::Value =
+        serde_json::from_str(history_json).unwrap_or_else(|_| serde_json::json!({}));
+    rewrite_history_value_image_paths(&mut parsed_history, images_dir, &image_name_to_path);
+
+    let next_nodes_json =
+        serde_json::to_string(&parsed_nodes).map_err(|e| format!("Failed to encode nodes json: {}", e))?;
+    let next_history_json =
+        serde_json::to_string(&parsed_history).map_err(|e| format!("Failed to encode history json: {}", e))?;
+
+    Ok((next_nodes_json, next_history_json, node_count))
+}
+
+#[tauri::command]
+pub fn export_project_package(
+    app: AppHandle,
+    project_id: String,
+    target_path: String,
+) -> Result<(), String> {
+    let record = get_project_record(app.clone(), project_id)?
+        .ok_or_else(|| "Project not found".to_string())?;
+
+    let image_paths = extract_project_image_paths(&record.nodes_json, &record.history_json);
+    let mut image_files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut seen_filenames = HashSet::new();
+    let mut missing_images = Vec::new();
+
+    for path in image_paths {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let Some(filename) = Path::new(trimmed).file_name().and_then(|item| item.to_str()) else {
+            continue;
+        };
+
+        if !seen_filenames.insert(filename.to_string()) {
+            continue;
+        }
+
+        match std::fs::read(trimmed) {
+            Ok(bytes) => image_files.push((filename.to_string(), bytes)),
+            Err(_) => missing_images.push(trimmed.to_string()),
+        }
+    }
+
+    if !missing_images.is_empty() {
+        let mut preview = missing_images;
+        if preview.len() > 6 {
+            preview.truncate(6);
+            preview.push("...".to_string());
+        }
+        return Err(format!(
+            "Export failed: missing {} referenced image files: {}",
+            preview.len(),
+            preview.join(", ")
+        ));
+    }
+
+    let package = ProjectPackageV1 {
+        format_version: 1,
+        exported_at: now_timestamp_ms(),
+        project: ProjectPackageRecord {
+            name: record.name,
+            node_count: record.node_count,
+            nodes_json: record.nodes_json,
+            edges_json: record.edges_json,
+            viewport_json: record.viewport_json,
+            history_json: record.history_json,
+        },
+    };
+
+    let payload =
+        serde_json::to_vec(&package).map_err(|e| format!("Failed to encode project package: {}", e))?;
+
+    if let Some(parent) = Path::new(&target_path).parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create export directory: {}", e))?;
+    }
+
+    let file = File::create(&target_path).map_err(|e| format!("Failed to create export file: {}", e))?;
+    let mut zip = ZipWriter::new(file);
+    let options = SimpleFileOptions::default();
+
+    zip.start_file("project.json", options)
+        .map_err(|e| format!("Failed to write project.json: {}", e))?;
+    zip.write_all(&payload)
+        .map_err(|e| format!("Failed to write project.json: {}", e))?;
+
+    for (filename, bytes) in image_files {
+        let entry_name = format!("images/{}", filename);
+        zip.start_file(entry_name, options)
+            .map_err(|e| format!("Failed to write image entry: {}", e))?;
+        zip.write_all(&bytes)
+            .map_err(|e| format!("Failed to write image entry: {}", e))?;
+    }
+
+    zip.finish()
+        .map_err(|e| format!("Failed to finalize project package: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn import_project_package(app: AppHandle, source_path: String) -> Result<ProjectSummaryRecord, String> {
+    let file = File::open(&source_path).map_err(|e| format!("Failed to open project package: {}", e))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| format!("Failed to read project package: {}", e))?;
+
+    let package: ProjectPackageV1 = {
+        let mut manifest = archive
+            .by_name("project.json")
+            .map_err(|e| format!("Missing project.json in package: {}", e))?;
+        let mut content = String::new();
+        manifest
+            .read_to_string(&mut content)
+            .map_err(|e| format!("Failed to read project.json: {}", e))?;
+        serde_json::from_str(&content).map_err(|e| format!("Invalid project.json: {}", e))?
+    };
+
+    let images_dir = resolve_images_dir(&app)?;
+    let mut image_names: HashSet<String> = HashSet::new();
+
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|e| format!("Failed to read package entry: {}", e))?;
+        let name = entry.name().to_string();
+
+        if !name.starts_with("images/") || name.ends_with('/') {
+            continue;
+        }
+
+        let Some(filename) = Path::new(&name).file_name().and_then(|item| item.to_str()) else {
+            continue;
+        };
+
+        image_names.insert(filename.to_string());
+        let output_path = images_dir.join(filename);
+
+        if output_path.exists() {
+            std::io::copy(&mut entry, &mut std::io::sink())
+                .map_err(|e| format!("Failed to read package image: {}", e))?;
+            continue;
+        }
+
+        let mut output =
+            File::create(&output_path).map_err(|e| format!("Failed to persist image: {}", e))?;
+        std::io::copy(&mut entry, &mut output)
+            .map_err(|e| format!("Failed to persist image: {}", e))?;
+    }
+
+    let (nodes_json, history_json, node_count) = rewrite_project_image_paths_for_import(
+        &package.project.nodes_json,
+        &package.project.history_json,
+        &images_dir,
+        &image_names,
+    )?;
+
+    let now = now_timestamp_ms();
+    let project_id = Uuid::new_v4().to_string();
+    let node_count = if node_count > 0 { node_count } else { package.project.node_count };
+
+    let record = ProjectRecord {
+        id: project_id.clone(),
+        name: package.project.name,
+        created_at: now,
+        updated_at: now,
+        node_count,
+        nodes_json,
+        edges_json: package.project.edges_json,
+        viewport_json: package.project.viewport_json,
+        history_json,
+    };
+
+    upsert_project_record(app.clone(), record.clone())?;
+
+    Ok(ProjectSummaryRecord {
+        id: record.id,
+        name: record.name,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+        node_count: record.node_count,
+    })
 }

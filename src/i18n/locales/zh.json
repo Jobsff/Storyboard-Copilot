@@ -180,6 +180,13 @@
     "title": "项目管理",
     "newProject": "新建项目",
     "newProjectTitle": "新建项目",
+    "importProject": "导入项目",
+    "exportProject": "导出项目",
+    "packageFileType": "项目包",
+    "importFailedTitle": "导入失败",
+    "importFailed": "导入项目失败",
+    "exportFailedTitle": "导出失败",
+    "exportFailed": "导出项目失败",
     "open": "打开项目",
     "save": "保存项目",
     "name": "项目名称",
@@ -301,6 +308,55 @@
     "checkUpdateHasUpdate": "检测到新版本。",
     "checkUpdateUpToDate": "当前已是最新版本。",
     "checkUpdateFailed": "检查更新失败，请稍后重试。"
+  },
+  "style": {
+    "menu": "风格",
+    "category": {
+      "uiIcon": "UI 图标",
+      "uiPanel": "UI 按钮与面板",
+      "avatar": "角色头像",
+      "character": "角色立绘",
+      "monster": "怪物",
+      "prop": "道具",
+      "scene": "场景"
+    },
+    "item": {
+      "uiIcon": {
+        "chibiOutlineThickPaint": "Q版描边厚涂-技能图标",
+        "flatSymbolic": "扁平图标-符号化"
+      },
+      "uiPanel": {
+        "flatRoundedOutline": "扁平按钮-圆角描边",
+        "thickPaintPanelLightDecor": "厚涂面板-轻装饰"
+      },
+      "avatar": {
+        "chibiBigHead": "Q版头像-大头小身",
+        "animeCelClean": "赛璐璐头像-干净利落"
+      },
+      "character": {
+        "chibiThickPaint": "Q版立绘-厚涂",
+        "celActionPose": "赛璐璐立绘-动作姿态"
+      },
+      "monster": {
+        "chibiStrongSilhouette": "Q版怪物-轮廓强",
+        "celThreatClean": "赛璐璐怪物-硬朗切面"
+      },
+      "prop": {
+        "thickPaintMaterialClear": "厚涂道具-材质明确",
+        "flatSymbolic": "扁平道具-符号化"
+      },
+      "scene": {
+        "chibiIsometric": "Q版场景-俯视/等距",
+        "flatModular": "扁平场景-模块化"
+      }
+    },
+    "dialog": {
+      "title": "风格生成",
+      "subject": "主体描述",
+      "subjectPlaceholder": "例如：一个Q版蘑菇怪物头像，红白伞盖，咧嘴笑",
+      "preview": "提示词预览（只读）",
+      "create": "创建"
+    }
   },
   "pricing": {
     "nativePrice": "原币种：{{value}}",

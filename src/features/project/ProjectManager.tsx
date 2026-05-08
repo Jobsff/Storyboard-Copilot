@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, FolderOpen, Pencil, Trash2 } from 'lucide-react';
+import { Plus, FolderOpen, Pencil, Trash2, Download, Upload } from 'lucide-react';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import { useProjectStore } from '@/stores/projectStore';
 import { getConfiguredApiKeyCount, useSettingsStore } from '@/stores/settingsStore';
 import { UI_CONTENT_OVERLAY_INSET_CLASS } from '@/components/ui/motion';
 import { UiButton, UiModal, UiSelect } from '@/components/ui/primitives';
 import { MissingApiKeyHint } from '@/features/settings/MissingApiKeyHint';
 import { listModelProviders } from '@/features/canvas/models';
+import { resolveErrorContent, showErrorDialog } from '@/features/canvas/application/errorDialog';
 import { RenameDialog } from './RenameDialog';
 
 type ProjectSortField = 'name' | 'createdAt' | 'updatedAt';
@@ -17,6 +19,8 @@ export function ProjectManager() {
   const [showRenameDialog, setShowRenameDialog] = useState(false);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingProjectName, setEditingProjectName] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
+  const [exportingProjectId, setExportingProjectId] = useState<string | null>(null);
   const [pendingDeleteProject, setPendingDeleteProject] = useState<{ id: string; name: string } | null>(
     null
   );
@@ -27,8 +31,16 @@ export function ProjectManager() {
     getConfiguredApiKeyCount(state.apiKeys, providerIds)
   );
 
-  const { projects, isOpeningProject, createProject, deleteProject, renameProject, openProject } =
-    useProjectStore();
+  const {
+    projects,
+    isOpeningProject,
+    createProject,
+    deleteProject,
+    renameProject,
+    openProject,
+    exportProjectPackage,
+    importProjectPackage,
+  } = useProjectStore();
 
   const handleCreateProject = () => {
     setEditingProjectId(null);
@@ -53,6 +65,54 @@ export function ProjectManager() {
       renameProject(editingProjectId, name);
     } else {
       createProject(name);
+    }
+  };
+
+  const toSafePackageFilename = (name: string) => {
+    const trimmed = name.trim() || 'project';
+    return trimmed.replace(/[\\/:*?"<>|]+/g, '_');
+  };
+
+  const handleImportProject = async () => {
+    try {
+      setIsImporting(true);
+      const selectedPath = await open({
+        multiple: false,
+        filters: [{ name: t('project.packageFileType'), extensions: ['sbcp'] }],
+      });
+
+      if (!selectedPath || Array.isArray(selectedPath)) {
+        return;
+      }
+
+      await importProjectPackage(selectedPath);
+    } catch (error) {
+      const content = resolveErrorContent(error, t('project.importFailed'));
+      await showErrorDialog(content.message, t('project.importFailedTitle'), content.details);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  const handleExportClick = async (id: string, name: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      setExportingProjectId(id);
+      const selectedPath = await save({
+        defaultPath: `${toSafePackageFilename(name)}.sbcp`,
+        filters: [{ name: t('project.packageFileType'), extensions: ['sbcp'] }],
+      });
+
+      if (!selectedPath || Array.isArray(selectedPath)) {
+        return;
+      }
+
+      await exportProjectPackage(id, selectedPath);
+    } catch (error) {
+      const content = resolveErrorContent(error, t('project.exportFailed'));
+      await showErrorDialog(content.message, t('project.exportFailedTitle'), content.details);
+    } finally {
+      setExportingProjectId(null);
     }
   };
 
@@ -105,10 +165,28 @@ export function ProjectManager() {
               </UiSelect>
             </div>
           </div>
-          <UiButton type="button" variant="primary" onClick={handleCreateProject} className="gap-2">
-            <Plus className="w-5 h-5" />
-            {t('project.newProject')}
-          </UiButton>
+          <div className="flex items-center gap-2">
+            <UiButton
+              type="button"
+              variant="muted"
+              onClick={handleImportProject}
+              disabled={isImporting || Boolean(exportingProjectId)}
+              className="gap-2"
+            >
+              <Upload className="w-5 h-5" />
+              {t('project.importProject')}
+            </UiButton>
+            <UiButton
+              type="button"
+              variant="primary"
+              onClick={handleCreateProject}
+              disabled={isImporting || Boolean(exportingProjectId)}
+              className="gap-2"
+            >
+              <Plus className="w-5 h-5" />
+              {t('project.newProject')}
+            </UiButton>
+          </div>
         </div>
 
         {configuredApiKeyCount === 0 && <MissingApiKeyHint className="mb-8" />}
@@ -134,7 +212,17 @@ export function ProjectManager() {
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
                       type="button"
+                      onClick={(e) => handleExportClick(project.id, project.name, e)}
+                      disabled={isImporting || exportingProjectId === project.id}
+                      className="p-1 hover:bg-bg-dark rounded disabled:opacity-50"
+                      title={t('project.exportProject')}
+                    >
+                      <Download className="w-4 h-4 text-text-muted hover:text-text-dark" />
+                    </button>
+                    <button
+                      type="button"
                       onClick={(e) => handleRenameClick(project.id, project.name, e)}
+                      disabled={isImporting || Boolean(exportingProjectId)}
                       className="p-1 hover:bg-bg-dark rounded"
                       title={t('project.rename')}
                     >
@@ -143,6 +231,7 @@ export function ProjectManager() {
                     <button
                       type="button"
                       onClick={(e) => handleDeleteClick(project.id, project.name, e)}
+                      disabled={isImporting || Boolean(exportingProjectId)}
                       className="p-1 hover:bg-bg-dark rounded"
                       title={t('project.delete')}
                     >

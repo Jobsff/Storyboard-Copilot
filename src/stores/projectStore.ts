@@ -10,7 +10,9 @@ import {
 } from './canvasStore';
 import {
   deleteProjectRecord,
+  exportProjectPackage as exportProjectPackageCommand,
   getProjectRecord,
+  importProjectPackage as importProjectPackageCommand,
   listProjectSummaries,
   renameProjectRecord,
   updateProjectViewportRecord,
@@ -594,6 +596,8 @@ interface ProjectState {
   openProject: (id: string) => void;
   closeProject: () => void;
   getCurrentProject: () => Project | null;
+  exportProjectPackage: (projectId: string, targetPath: string) => Promise<void>;
+  importProjectPackage: (sourcePath: string) => Promise<void>;
   saveCurrentProject: (
     nodes: CanvasNode[],
     edges: CanvasEdge[],
@@ -747,6 +751,19 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         set({ isOpeningProject: false });
       }
     })();
+  },
+
+  exportProjectPackage: async (projectId, targetPath) => {
+    await exportProjectPackageCommand(projectId, targetPath);
+  },
+
+  importProjectPackage: async (sourcePath) => {
+    const record = await importProjectPackageCommand(sourcePath);
+    const imported = toProjectSummary(record);
+
+    set((state) => ({
+      projects: [{ ...imported }, ...state.projects].sort((a, b) => b.updatedAt - a.updatedAt),
+    }));
   },
 
   closeProject: () => {

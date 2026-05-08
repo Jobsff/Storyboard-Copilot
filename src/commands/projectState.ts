@@ -68,3 +68,17 @@ export async function deleteProjectRecord(projectId: string): Promise<void> {
   }
   await invoke('delete_project_record', { projectId });
 }
+
+export async function exportProjectPackage(projectId: string, targetPath: string): Promise<void> {
+  if (!isTauri()) {
+    return;
+  }
+  await invoke('export_project_package', { projectId, targetPath });
+}
+
+export async function importProjectPackage(sourcePath: string): Promise<ProjectSummaryRecord> {
+  if (!isTauri()) {
+    throw new Error('Import project package is only supported in Tauri runtime.');
+  }
+  return await invoke<ProjectSummaryRecord>('import_project_package', { sourcePath });
+}

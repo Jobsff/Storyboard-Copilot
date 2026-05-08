@@ -54,7 +54,9 @@ import { NodeSelectionMenu } from './NodeSelectionMenu';
 import { SelectedNodeOverlay } from './ui/SelectedNodeOverlay';
 import { NodeToolDialog } from './ui/NodeToolDialog';
 import { ImageViewerModal } from './ui/ImageViewerModal';
+import { StylePromptDialog } from './ui/StylePromptDialog';
 import { MissingApiKeyHint } from '@/features/settings/MissingApiKeyHint';
+import { getBuiltInStylePreset } from '@/features/canvas/styles/builtInStyles';
 
 const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, zoom: 1 };
 
@@ -248,6 +250,7 @@ export function Canvas() {
   );
   const [previewConnectionVisual, setPreviewConnectionVisual] =
     useState<PreviewConnectionVisual | null>(null);
+  const [styleDialogPresetId, setStyleDialogPresetId] = useState<string | null>(null);
 
   const isRestoringCanvasRef = useRef(true);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1043,6 +1046,21 @@ export function Canvas() {
     ]
   );
 
+  const handleStyleSelect = useCallback((styleId: string) => {
+    setShowNodeMenu(false);
+    setMenuAllowedTypes(undefined);
+    setPendingConnectStart(null);
+    setPreviewConnectionVisual(null);
+    setStyleDialogPresetId(styleId);
+  }, []);
+
+  const styleDialogPreset = useMemo(() => {
+    if (!styleDialogPresetId) {
+      return null;
+    }
+    return getBuiltInStylePreset(styleDialogPresetId);
+  }, [styleDialogPresetId]);
+
   const duplicateNodes = useCallback(
     (sourceNodeIds: string[], options: DuplicateOptions = {}) => {
       const dedupedIds = Array.from(new Set(sourceNodeIds));
@@ -1665,6 +1683,7 @@ export function Canvas() {
           position={menuPosition}
           allowedTypes={menuAllowedTypes}
           onSelect={handleNodeSelect}
+          onSelectStyle={handleStyleSelect}
           onClose={() => {
             setShowNodeMenu(false);
             setMenuAllowedTypes(undefined);
@@ -1673,6 +1692,23 @@ export function Canvas() {
           }}
         />
       )}
+
+      <StylePromptDialog
+        isOpen={Boolean(styleDialogPresetId)}
+        preset={styleDialogPreset}
+        onClose={() => setStyleDialogPresetId(null)}
+        onConfirm={(subject, prompt, preset) => {
+          const newNodeId = addNode(CANVAS_NODE_TYPES.imageEdit, flowPosition, {
+            prompt,
+            displayName: `${t(preset.labelKey)} - ${subject}`,
+            stylePresetId: preset.id,
+            stylePresetVersion: preset.version,
+          });
+          scheduleCanvasPersist(0);
+          setStyleDialogPresetId(null);
+          setSelectedNode(newNodeId);
+        }}
+      />
 
       <NodeToolDialog />
 
