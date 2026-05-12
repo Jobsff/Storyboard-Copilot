@@ -28,6 +28,7 @@ ComfyUI_frontend/
 Henji-AI/
 
 # Temp / local smoketest artifacts
-temp/out/
-temp/*apikey*.md
-temp/测试用apikey.md
+temp/
+.codepilot-uploads/
+.trae/
+PLAN.md
