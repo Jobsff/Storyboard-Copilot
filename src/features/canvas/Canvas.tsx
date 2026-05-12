@@ -1089,21 +1089,6 @@ export function Canvas() {
     ]
   );
 
-  const handleStyleSelect = useCallback((styleId: string) => {
-    setShowNodeMenu(false);
-    setMenuAllowedTypes(undefined);
-    setPendingConnectStart(null);
-    setPreviewConnectionVisual(null);
-    setStyleDialogPresetId(styleId);
-  }, []);
-
-  const handleUiAssetPresetSelect = useCallback((presetId: string) => {
-    setShowNodeMenu(false);
-    setMenuAllowedTypes(undefined);
-    setPendingConnectStart(null);
-    setPreviewConnectionVisual(null);
-    setUiAssetDialogPresetId(presetId);
-  }, []);
 
   const handleGameAssetTemplateSelect = useCallback((templateId: string) => {
     setShowNodeMenu(false);
