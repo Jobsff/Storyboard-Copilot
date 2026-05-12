@@ -63,7 +63,13 @@ import {
 import { GRSAI_NANO_BANANA_PRO_MODEL_ID } from '@/features/canvas/models/image/grsai/nanoBananaPro';
 import { FAL_NANO_BANANA_2_MODEL_ID } from '@/features/canvas/models/image/fal/nanoBanana2';
 import { KIE_NANO_BANANA_2_MODEL_ID } from '@/features/canvas/models/image/kie/nanoBanana2';
+import { API666_GPT_IMAGE_2_MODEL_ID } from '@/features/canvas/models/image/api666/gptImage2';
+import { resolve666ApiKey } from '@/features/canvas/models/providers/api666';
 import { resolveModelPriceDisplay } from '@/features/canvas/pricing';
+import {
+  applyTransparentBackgroundHint,
+  TRANSPARENT_BACKGROUND_EXTRA_PARAM_KEY,
+} from '@/features/canvas/application/transparentBackground';
 import { ModelParamsControls } from '@/features/canvas/ui/ModelParamsControls';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
 import {
@@ -621,8 +627,10 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
     const modelId = nodeData.model ?? DEFAULT_IMAGE_MODEL_ID;
     return getImageModel(modelId);
   }, [nodeData.model]);
-  const providerApiKey = apiKeys[selectedModel.providerId] ?? '';
-  const effectiveExtraParams = useMemo(
+  const providerApiKey = selectedModel.providerId === '666api'
+    ? (resolve666ApiKey(selectedModel.id, apiKeys) ?? '')
+    : (apiKeys[selectedModel.providerId] ?? '');
+  const effectiveExtraParams = useMemo<Record<string, unknown>>(
     () => ({
       ...(nodeData.extraParams ?? {}),
       ...(selectedModel.id === GRSAI_NANO_BANANA_PRO_MODEL_ID
@@ -1101,6 +1109,12 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
     try {
       await canvasAiGateway.setApiKey(selectedModel.providerId, providerApiKey);
 
+      const finalPrompt =
+        selectedModel.id === API666_GPT_IMAGE_2_MODEL_ID &&
+        Boolean(effectiveExtraParams[TRANSPARENT_BACKGROUND_EXTRA_PARAM_KEY])
+          ? applyTransparentBackgroundHint(prompt)
+          : prompt;
+
       // 生成网格图片作为最后一张参考图片
       const gridImageDataUrl = generateGridImageDataUrl(
         resolvedRequestAspectRatio,
@@ -1120,7 +1134,7 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
         });
 
       const jobId = await canvasAiGateway.submitGenerateImageJob({
-        prompt,
+        prompt: finalPrompt,
         model: requestResolution.requestModel,
         size: selectedResolution.value,
         aspectRatio: resolvedRequestAspectRatio,
@@ -1133,7 +1147,7 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
         requestModel: requestResolution.requestModel,
         requestSize: selectedResolution.value,
         requestAspectRatio: resolvedRequestAspectRatio,
-        prompt,
+        prompt: finalPrompt,
         extraParams: effectiveExtraParams,
         referenceImageCount: allReferenceImages.length,
         referenceImagePlaceholders: createReferenceImagePlaceholders(allReferenceImages.length),

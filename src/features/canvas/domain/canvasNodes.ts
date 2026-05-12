@@ -1,10 +1,16 @@
 import type { Edge, Node, XYPosition } from '@xyflow/react';
+import type { UiAssetNodeMeta } from '@/features/canvas/uiAssets/types';
 
 export const CANVAS_NODE_TYPES = {
   upload: 'uploadNode',
   imageEdit: 'imageNode',
   imageAutoPrompt: 'imageAutoPromptNode',
+  imageAutoPromptZh: 'imageAutoPromptZhNode',
+  imageAutoPromptJson: 'imageAutoPromptJsonNode',
   exportImage: 'exportImageNode',
+  videoEdit: 'videoNode',
+  exportVideo: 'exportVideoNode',
+  spine: 'spineNode',
   textAnnotation: 'textAnnotationNode',
   group: 'groupNode',
   storyboardSplit: 'storyboardNode',
@@ -31,7 +37,11 @@ export const IMAGE_ASPECT_RATIOS = [
   '21:9',
 ] as const;
 
+export const VIDEO_ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'] as const;
+export const VIDEO_QUALITIES = ['480p', '720p', '1080p'] as const;
+
 export type ImageSize = (typeof IMAGE_SIZES)[number];
+export type VideoQuality = (typeof VIDEO_QUALITIES)[number];
 
 export interface NodeDisplayData {
   displayName?: string;
@@ -58,6 +68,7 @@ export type ExportImageNodeResultKind =
 
 export interface ExportImageNodeData extends NodeImageData {
   resultKind?: ExportImageNodeResultKind;
+  uiAssetMeta?: UiAssetNodeMeta;
 }
 
 export interface GroupNodeData extends NodeDisplayData {
@@ -77,6 +88,7 @@ export interface ImageEditNodeData extends NodeImageData {
   requestAspectRatio?: string;
   extraParams?: Record<string, unknown>;
   autoPrompt?: boolean;
+  autoPromptFormat?: 'text' | 'json';
   autoPromptRunning?: boolean;
   isGenerating?: boolean;
   generationStartedAt?: number | null;
@@ -143,12 +155,53 @@ export interface StoryboardGenNodeData {
   [key: string]: unknown;
 }
 
+export interface VideoEditNodeData extends NodeDisplayData {
+  prompt: string;
+  model: string;
+  aspectRatio: string;
+  quality: VideoQuality;
+  durationSeconds: number;
+  extraParams?: Record<string, unknown>;
+}
+
+export interface ExportVideoNodeData extends NodeDisplayData {
+  videoUrl: string | null;
+  posterImageUrl?: string | null;
+  aspectRatio: string;
+  isSizeManuallyAdjusted?: boolean;
+  isGenerating?: boolean;
+  generationStartedAt?: number | null;
+  generationDurationMs?: number;
+  generationJobId?: string | null;
+  generationProviderId?: string | null;
+  generationClientSessionId?: string | null;
+  generationError?: string | null;
+  generationErrorDetails?: string | null;
+  generationDebugContext?: unknown;
+  [key: string]: unknown;
+}
+
+export interface SpineNodeData extends NodeDisplayData {
+  spineJsonPath: string | null;
+  spineAtlasPath: string | null;
+  spineTexturePaths: string[];
+  spineAnimation: string | null;
+  spineSkin: string | null;
+  loop: boolean;
+  timeScale: number;
+  error?: string | null;
+  [key: string]: unknown;
+}
+
 export type CanvasNodeData =
   | UploadImageNodeData
   | ExportImageNodeData
   | TextAnnotationNodeData
   | GroupNodeData
   | ImageEditNodeData
+  | VideoEditNodeData
+  | ExportVideoNodeData
+  | SpineNodeData
   | StoryboardSplitNodeData
   | StoryboardGenNodeData;
 
@@ -222,6 +275,24 @@ export function isStoryboardGenNode(
   node: CanvasNode | null | undefined
 ): node is Node<StoryboardGenNodeData, typeof CANVAS_NODE_TYPES.storyboardGen> {
   return node?.type === CANVAS_NODE_TYPES.storyboardGen;
+}
+
+export function isVideoEditNode(
+  node: CanvasNode | null | undefined
+): node is Node<VideoEditNodeData, typeof CANVAS_NODE_TYPES.videoEdit> {
+  return node?.type === CANVAS_NODE_TYPES.videoEdit;
+}
+
+export function isExportVideoNode(
+  node: CanvasNode | null | undefined
+): node is Node<ExportVideoNodeData, typeof CANVAS_NODE_TYPES.exportVideo> {
+  return node?.type === CANVAS_NODE_TYPES.exportVideo;
+}
+
+export function isSpineNode(
+  node: CanvasNode | null | undefined
+): node is Node<SpineNodeData, typeof CANVAS_NODE_TYPES.spine> {
+  return node?.type === CANVAS_NODE_TYPES.spine;
 }
 
 export function nodeHasImage(node: CanvasNode | null | undefined): boolean {

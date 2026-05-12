@@ -238,7 +238,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'settings-storage',
-      version: 10,
+      version: 11,
       onRehydrateStorage: () => {
         return (state, error) => {
           if (error) {
@@ -268,6 +268,14 @@ export const useSettingsStore = create<SettingsState>()(
         };
 
         const migratedApiKeys = normalizeApiKeys(state.apiKeys);
+        if (migratedApiKeys['666api']) {
+          const existingKey = migratedApiKeys['666api'];
+          migratedApiKeys['666api_claude'] = existingKey;
+          migratedApiKeys['666api_gpt'] = existingKey;
+          migratedApiKeys['666api_gemini'] = existingKey;
+          migratedApiKeys['666api_default'] = existingKey;
+          delete migratedApiKeys['666api'];
+        }
         const ignoreAtTagWhenCopyingAndGenerating =
           state.ignoreAtTagWhenCopyingAndGenerating ?? true;
         if (Object.keys(migratedApiKeys).length > 0) {

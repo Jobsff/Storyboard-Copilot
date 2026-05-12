@@ -35,6 +35,7 @@ function createEmptyHistory(): CanvasHistoryState {
 }
 
 const IMAGE_REF_PREFIX = '__img_ref__:';
+const ASSET_REF_PREFIX = '__asset_ref__:';
 let openProjectRequestSeq = 0;
 const UPSERT_DEBOUNCE_MS = 260;
 const VIEWPORT_UPSERT_DEBOUNCE_MS = 280;
@@ -71,6 +72,7 @@ export interface Project extends ProjectSummary {
 
 type PersistedProject = Project & {
   imagePool?: string[];
+  assetPool?: string[];
 };
 
 function encodeImageReference(
@@ -107,6 +109,42 @@ function decodeImageReference(
   }
 
   return imagePool[index] ?? null;
+}
+
+function encodeAssetReference(
+  assetPath: string | null | undefined,
+  assetPool: string[],
+  assetIndexMap: Map<string, number>
+): string | null | undefined {
+  if (typeof assetPath !== 'string' || assetPath.length === 0) {
+    return assetPath;
+  }
+
+  const existingIndex = assetIndexMap.get(assetPath);
+  if (typeof existingIndex === 'number') {
+    return `${ASSET_REF_PREFIX}${existingIndex}`;
+  }
+
+  const nextIndex = assetPool.length;
+  assetPool.push(assetPath);
+  assetIndexMap.set(assetPath, nextIndex);
+  return `${ASSET_REF_PREFIX}${nextIndex}`;
+}
+
+function decodeAssetReference(
+  assetPath: string | null | undefined,
+  assetPool: string[] | undefined
+): string | null | undefined {
+  if (typeof assetPath !== 'string' || !assetPool || !assetPath.startsWith(ASSET_REF_PREFIX)) {
+    return assetPath;
+  }
+
+  const index = Number.parseInt(assetPath.slice(ASSET_REF_PREFIX.length), 10);
+  if (!Number.isFinite(index) || index < 0) {
+    return assetPath;
+  }
+
+  return assetPool[index] ?? null;
 }
 
 function mapNodeImageReferences(
@@ -152,6 +190,34 @@ function mapNodeImageReferences(
   });
 }
 
+function mapNodeAssetReferences(
+  nodes: CanvasNode[],
+  mapAssetPath: (assetPath: string | null | undefined) => string | null | undefined
+): CanvasNode[] {
+  return nodes.map((node) => {
+    const nodeData = node.data as Record<string, unknown>;
+    const nextData: Record<string, unknown> = { ...nodeData };
+
+    if ('spineJsonPath' in nextData) {
+      nextData.spineJsonPath = mapAssetPath(nextData.spineJsonPath as string | null | undefined) ?? null;
+    }
+    if ('spineAtlasPath' in nextData) {
+      nextData.spineAtlasPath =
+        mapAssetPath(nextData.spineAtlasPath as string | null | undefined) ?? null;
+    }
+    if (Array.isArray(nextData.spineTexturePaths)) {
+      nextData.spineTexturePaths = nextData.spineTexturePaths
+        .map((value) => mapAssetPath(value as string | null | undefined))
+        .filter((value): value is string => typeof value === 'string' && value.length > 0);
+    }
+
+    return {
+      ...node,
+      data: nextData as CanvasNodeData,
+    };
+  });
+}
+
 function mapHistoryImageReferences(
   history: CanvasHistoryState,
   mapImageUrl: (imageUrl: string | null | undefined) => string | null | undefined
@@ -164,6 +230,22 @@ function mapHistoryImageReferences(
     future: history.future.map((snapshot) => ({
       ...snapshot,
       nodes: mapNodeImageReferences(snapshot.nodes, mapImageUrl),
+    })),
+  };
+}
+
+function mapHistoryAssetReferences(
+  history: CanvasHistoryState,
+  mapAssetPath: (assetPath: string | null | undefined) => string | null | undefined
+): CanvasHistoryState {
+  return {
+    past: history.past.map((snapshot) => ({
+      ...snapshot,
+      nodes: mapNodeAssetReferences(snapshot.nodes, mapAssetPath),
+    })),
+    future: history.future.map((snapshot) => ({
+      ...snapshot,
+      nodes: mapNodeAssetReferences(snapshot.nodes, mapAssetPath),
     })),
   };
 }
@@ -181,11 +263,17 @@ function encodeProject(project: Project): PersistedProject {
   const encode = (imageUrl: string | null | undefined) =>
     encodeImageReference(imageUrl, imagePool, imageIndexMap);
 
+  const assetPool: string[] = [];
+  const assetIndexMap = new Map<string, number>();
+  const encodeAsset = (assetPath: string | null | undefined) =>
+    encodeAssetReference(assetPath, assetPool, assetIndexMap);
+
   return {
     ...project,
-    nodes: mapNodeImageReferences(project.nodes, encode),
-    history: mapHistoryImageReferences(project.history, encode),
+    nodes: mapNodeAssetReferences(mapNodeImageReferences(project.nodes, encode), encodeAsset),
+    history: mapHistoryAssetReferences(mapHistoryImageReferences(project.history, encode), encodeAsset),
     imagePool,
+    assetPool,
   };
 }
 
@@ -193,10 +281,13 @@ function decodeProject(project: PersistedProject): Project {
   const decode = (imageUrl: string | null | undefined) =>
     decodeImageReference(imageUrl, project.imagePool);
 
+  const decodeAsset = (assetPath: string | null | undefined) =>
+    decodeAssetReference(assetPath, project.assetPool);
+
   return {
     ...project,
-    nodes: mapNodeImageReferences(project.nodes, decode),
-    history: mapHistoryImageReferences(project.history, decode),
+    nodes: mapNodeImageReferences(mapNodeAssetReferences(project.nodes, decodeAsset), decode),
+    history: mapHistoryImageReferences(mapHistoryAssetReferences(project.history, decodeAsset), decode),
   };
 }
 
@@ -271,6 +362,51 @@ function extractImagePoolFromHistoryJson(historyJson: string): string[] {
   return parsed.filter((item): item is string => typeof item === 'string');
 }
 
+function extractAssetPoolFromHistoryJson(historyJson: string): string[] {
+  const assetPoolKey = '"assetPool"';
+  const keyIndex = historyJson.indexOf(assetPoolKey);
+  if (keyIndex < 0) {
+    return [];
+  }
+
+  const arrayStart = historyJson.indexOf('[', keyIndex + assetPoolKey.length);
+  if (arrayStart < 0) {
+    return [];
+  }
+
+  let depth = 0;
+  let arrayEnd = -1;
+
+  for (let index = arrayStart; index < historyJson.length; index += 1) {
+    const char = historyJson[index];
+
+    if (char === '[') {
+      depth += 1;
+      continue;
+    }
+
+    if (char === ']') {
+      depth -= 1;
+      if (depth === 0) {
+        arrayEnd = index;
+        break;
+      }
+    }
+  }
+
+  if (arrayEnd < 0) {
+    return [];
+  }
+
+  const rawArrayJson = historyJson.slice(arrayStart, arrayEnd + 1);
+  const parsed = safeParseJson<unknown>(rawArrayJson, []);
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+
+  return parsed.filter((item): item is string => typeof item === 'string');
+}
+
 function toProjectSummary(record: ProjectSummaryRecord): ProjectSummary {
   return {
     id: record.id,
@@ -298,6 +434,7 @@ function toProjectRecord(project: Project): ProjectRecord {
     historyJson: JSON.stringify({
       ...persistedHistory,
       imagePool: encodedProject.imagePool ?? [],
+      assetPool: encodedProject.assetPool ?? [],
     }),
   };
 }
@@ -308,11 +445,13 @@ function fromProjectRecord(record: ProjectRecord): Project {
   const parsedViewport = safeParseJson<Viewport>(record.viewportJson, DEFAULT_VIEWPORT);
   const shouldRestoreHistory = record.historyJson.length <= MAX_HISTORY_RESTORE_JSON_CHARS;
   const extractedImagePool = extractImagePoolFromHistoryJson(record.historyJson);
+  const extractedAssetPool = extractAssetPoolFromHistoryJson(record.historyJson);
   const parsedHistoryPayload = shouldRestoreHistory
     ? safeParseJson<{
         past?: CanvasHistoryState['past'];
         future?: CanvasHistoryState['future'];
         imagePool?: string[];
+        assetPool?: string[];
       }>(record.historyJson, {})
     : {};
 
@@ -338,6 +477,7 @@ function fromProjectRecord(record: ProjectRecord): Project {
     viewport: parsedViewport ?? DEFAULT_VIEWPORT,
     history: parsedHistory,
     imagePool: parsedHistoryPayload.imagePool ?? extractedImagePool,
+    assetPool: parsedHistoryPayload.assetPool ?? extractedAssetPool,
   };
 
   const decodedProject = decodeProject(persistedProject);

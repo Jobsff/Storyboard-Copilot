@@ -9,6 +9,8 @@
     "confirm": "确认",
     "delete": "删除",
     "edit": "编辑",
+    "yes": "是",
+    "no": "否",
     "close": "关闭",
     "loading": "加载中...",
     "error": "错误",
@@ -64,6 +66,15 @@
   "nodeToolbar": {
     "reupload": "重新上传",
     "copy": "复制",
+    "copyPrompt": "复制提示词",
+    "info": "简介",
+    "infoTitle": "图片简介",
+    "infoProvider": "供应商",
+    "infoModel": "模型",
+    "infoAspectRatio": "比例",
+    "infoResolution": "分辨率",
+    "infoRequestSize": "请求尺寸",
+    "infoPrompt": "提示词",
     "copyText": "复制文本",
     "copyErrorReport": "复制报错",
     "copied": "已复制",
@@ -82,6 +93,8 @@
     "autoAspectRatio": "自动",
     "quality": "画质",
     "aspectRatio": "比例",
+    "transparentBackground": "透明背景",
+    "transparentBackgroundDesc": "让模型尽量输出带有 Alpha 通道的 PNG（alpha=0 背景），适合做抠图素材。",
     "enableWebSearch": "启用联网搜索",
     "otherParams": "其他参数",
     "extraOptions": "额外参数",
@@ -91,14 +104,97 @@
     "thinkingMinimal": "标准",
     "thinkingHigh": "高"
   },
+  "gameAsset": {
+    "menu": "游戏资产模板",
+    "category": {
+      "ui": "UI 素材类",
+      "gameplay": "游戏层素材类",
+      "vfx": "特效与动画类",
+      "marketing": "产品宣传类",
+      "tech": "技术适配类",
+      "other": "其他"
+    },
+    "group": {
+      "ui": {
+        "basic": "基础UI组件",
+        "screens": "功能界面模板",
+        "hud": "HUD组件",
+        "decor": "装饰元素"
+      },
+      "gameplay": {
+        "character": "角色系统素材",
+        "monster": "怪物与NPC素材",
+        "scene": "场景资源",
+        "icons": "物品与技能图标"
+      },
+      "vfx": {
+        "particles": "粒子特效库",
+        "anim": "全类型动画资源"
+      },
+      "marketing": "产品宣传素材",
+      "tech": {
+        "engine": "引擎资源优化",
+        "platform": "多平台适配"
+      },
+      "other": "其他"
+    },
+    "item": {
+      "ui": {
+        "basic_components": "基础UI组件一套",
+        "screen_templates": "功能界面模板一套",
+        "hud_components": "HUD组件一套",
+        "decorations": "装饰元素一套"
+      },
+      "gameplay": {
+        "character_system": "角色系统素材一套",
+        "monsters_npcs": "怪物与NPC素材一套",
+        "scenes": "场景资源一套",
+        "items_skills_icons": "物品与技能图标一套"
+      },
+      "vfx": {
+        "particle_library": "粒子特效库一套",
+        "animation_sets": "全类型动画资源规划"
+      },
+      "marketing": {
+        "promo_assets": "产品宣传素材一套"
+      },
+      "tech": {
+        "engine_optimization": "引擎资源优化规划",
+        "multi_platform": "多平台适配规划"
+      },
+      "other": {
+        "misc": "其他资源风格示意"
+      }
+    },
+    "dialog": {
+      "title": "游戏资产模板",
+      "preview": "提示词预览",
+      "create": "创建"
+    }
+  },
+  "spine": {
+    "import": "导入 Spine",
+    "importing": "导入中...",
+    "fileType": "Spine 文件",
+    "invalidSelection": "请选择 1 个 .json、1 个 .atlas 和至少 1 个 .png",
+    "atlasImageSizeMismatch": "atlas 声明的贴图尺寸与实际图片尺寸不一致，请重新导出匹配的 atlas + png",
+    "missingTextures": "atlas 中引用的贴图缺失（{{count}} 个）",
+    "importFailed": "导入 Spine 失败",
+    "importFailedTitle": "Spine 导入失败",
+    "importRequiresTauri": "当前运行环境不支持导入 Spine 资源"
+  },
   "node": {
     "menu": {
       "uploadImage": "上传图片",
       "aiImageGeneration": "AI 图片",
+      "aiVideoGeneration": "AI 视频",
+      "spine": "Spine 动画",
       "storyboard": "分镜节点",
       "storyboardGen": "分镜生成",
       "textAnnotation": "文本注释",
-      "autoPrompt": "自动反推提示词"
+      "autoPrompt": "自动反推提示词",
+      "autoPromptZh": "反推提示词（中文）",
+      "autoPromptJson": "反推提示词（json）"
     },
     "imageNode": {
       "title": "图片节点",
@@ -121,6 +217,26 @@
       "apiKeyRequired": "请在设置中填写 API Key",
       "resultTitle": "结果图片",
       "promptPlaceholder": "描述任何你想要生成或编辑的内容"
+    },
+    "videoEdit": {
+      "promptRequired": "请输入提示词",
+      "apiKeyRequired": "请在设置中填写 API Key",
+      "referenceRequired": "请先连接一张参考图（图生视频）",
+      "resultTitle": "结果视频",
+      "aspectRatio": "比例",
+      "quality": "清晰度",
+      "duration": "时长",
+      "promptPlaceholder": "描述你想要生成的视频（建议包含动作、镜头与节奏）",
+      "tip": "提示：会自动把比例/清晰度/时长拼接进提示词。",
+      "referenceImagesHint": "参考图 {{count}}",
+      "autoSwitchHint": "已自动切换到 {{model}}",
+      "generate": "生成视频",
+      "generating": "生成中..."
+    },
+    "videoNode": {
+      "waitingResult": "等待输出结果视频",
+      "generating": "生成中...",
+      "generationFailed": "生成失败"
     },
     "upload": {
       "uploadedAlt": "已上传图片",
@@ -271,6 +387,11 @@
     "providerRegisterLink": "点击这里注册",
     "providerApiKeyGuideMiddle": "，然后",
     "getApiKeyLink": "点击这里获取密钥",
+    "api666KeyGroupDesc": "666API 按模型分组使用不同的令牌，请分别配置各组密钥。",
+    "api666KeyGroupGemini": "Gemini 模型",
+    "api666KeyGroupGpt": "GPT 模型",
+    "api666KeyGroupClaude": "Claude 模型",
+    "api666KeyGroupDefault": "默认（其他模型）",
     "missingAnyApiKeyMessage": "您尚未配置任何密钥，请打开设置进行配置。",
     "openProvidersSettings": "打开设置",
     "aboutAppName": "巨游美术工坊",
@@ -358,6 +479,57 @@
       "create": "创建"
     }
   },
+  "uiAsset": {
+    "menu": "UI 设计",
+    "category": {
+      "button": "按钮",
+      "progress": "进度条",
+      "panel": "边框 / 面板",
+      "icon": "图标 / 槽位",
+      "badge": "标签 / 徽章"
+    },
+    "preset": {
+      "button": {
+        "small_128x64": "小按钮 128×64",
+        "normal_256x96": "普通按钮 256×96",
+        "long_512x128": "长按钮 512×128"
+      },
+      "progress": {
+        "short_256x48": "短进度条 256×48",
+        "long_1024x96": "长进度条 1024×96"
+      },
+      "panel": {
+        "popup_1024x768": "普通弹窗 1024×768",
+        "nineslice_1024x1024": "九宫格通用面板 1024×1024"
+      },
+      "icon": {
+        "skill_512x512": "技能图标 512×512",
+        "item_512x512": "道具图标 512×512",
+        "slot_256x256": "背包格子 256×256"
+      },
+      "badge": {
+        "new_256x96": "NEW 标签底图 256×96",
+        "sale_384x128": "SALE 标签底图 384×128",
+        "ssr_512x512": "SSR 徽章底图 512×512"
+      }
+    },
+    "dialog": {
+      "title": "UI 设计生成",
+      "assetType": "资产类型",
+      "spec": "规格",
+      "targetSize": "目标尺寸",
+      "modelAspectRatio": "模型比例",
+      "requestSize": "请求尺寸",
+      "transparentBackground": "透明背景",
+      "nineSlice": "九宫格",
+      "variants": "状态/部件",
+      "subject": "你想生成什么？",
+      "subjectPlaceholder": "例如：能量水晶主按钮",
+      "promptPreview": "提示词预览（只读）",
+      "negativePrompt": "负面提示词（预留）",
+      "generate": "生成"
+    }
+  },
   "pricing": {
     "nativePrice": "原币种：{{value}}",
     "originalPrice": "原价：{{value}}",
@@ -379,5 +551,33 @@
   "errorDialog": {
     "detailsTitle": "错误详情",
     "copyReport": "复制报错信息"
+  },
+  "promptCraft": {
+    "menu": "Prompt 工程师",
+    "nodeDisplayName": "Prompt 工程师",
+    "dialog": {
+      "title": "AI Prompt 工程师",
+      "category": "图片类型",
+      "userInput": "描述你的需求",
+      "userInputPlaceholder": "例如：一个赛博朋克风格的茶馆海报...",
+      "craft": "生成提示词",
+      "crafting": "正在生成...",
+      "regenerate": "重新生成",
+      "preview": "提示词预览",
+      "generate": "生成图片",
+      "emptyHint": "输入需求后点击「生成提示词」"
+    },
+    "category": {
+      "general": "通用",
+      "photography": "摄影写实",
+      "poster": "海报 / 排版",
+      "product": "产品 / 美食",
+      "ui": "UI / 应用界面",
+      "character": "角色设计",
+      "anime": "动漫 / 漫画",
+      "gameAsset": "游戏素材",
+      "infographic": "信息图",
+      "illustration": "插画"
+    }
   }
 }

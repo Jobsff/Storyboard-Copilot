@@ -13,6 +13,7 @@ import { UI_CONTENT_OVERLAY_INSET_CLASS, UI_DIALOG_TRANSITION_MS } from '@/compo
 import { useDialogTransition } from '@/components/ui/useDialogTransition';
 import { listModelProviders } from '@/features/canvas/models';
 import { GRSAI_NANO_BANANA_PRO_MODEL_OPTIONS } from '@/features/canvas/models/providers/grsai';
+import { API666_KEY_GROUPS } from '@/features/canvas/models/providers/api666';
 import { GRSAI_CREDIT_TIERS } from '@/features/canvas/pricing/types';
 import providerGuideMarkdown from '../../docs/settings/provider-guide.md?raw';
 import type { SettingsCategory } from '@/features/settings/settingsEvents';
@@ -505,6 +506,61 @@ export function SettingsDialog({
                 <div className="ui-scrollbar flex-1 space-y-4 overflow-y-auto p-6">
                   {providers.map((provider) => {
                     const displayName = i18n.language.startsWith('zh') ? provider.label : provider.name;
+
+                    if (provider.id === '666api') {
+                      return (
+                        <div key={provider.id} className="rounded-lg border border-border-dark bg-bg-dark p-4">
+                          <div className="mb-3">
+                            <h3 className="text-sm font-medium text-text-dark">{displayName}</h3>
+                            <p className="text-xs text-text-muted">{t('settings.api666KeyGroupDesc')}</p>
+                          </div>
+                          <div className="space-y-3">
+                            {API666_KEY_GROUPS.map((group) => {
+                              const groupLabel = i18n.language.startsWith('zh') ? group.labelZh : group.label;
+                              const isGroupRevealed = Boolean(revealedApiKeys[group.id]);
+                              return (
+                                <div key={group.id}>
+                                  <div className="mb-1 text-xs font-medium text-text-muted">{groupLabel}</div>
+                                  <div className="relative">
+                                    <input
+                                      type={isGroupRevealed ? 'text' : 'password'}
+                                      value={localApiKeys[group.id] ?? ''}
+                                      onChange={(event) => {
+                                        const nextValue = event.target.value;
+                                        setLocalApiKeys((previous) => ({
+                                          ...previous,
+                                          [group.id]: nextValue,
+                                        }));
+                                        setProviderApiKey(group.id, nextValue);
+                                      }}
+                                      placeholder={t('settings.enterApiKey')}
+                                      className="w-full rounded border border-border-dark bg-surface-dark px-3 py-2 pr-10 text-sm text-text-dark placeholder:text-text-muted"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setRevealedApiKeys((previous) => ({
+                                          ...previous,
+                                          [group.id]: !isGroupRevealed,
+                                        }))
+                                      }
+                                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 hover:bg-bg-dark"
+                                    >
+                                      {isGroupRevealed ? (
+                                        <EyeOff className="h-4 w-4 text-text-muted" />
+                                      ) : (
+                                        <Eye className="h-4 w-4 text-text-muted" />
+                                      )}
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    }
+
                     const isRevealed = Boolean(revealedApiKeys[provider.id]);
 
                     return (

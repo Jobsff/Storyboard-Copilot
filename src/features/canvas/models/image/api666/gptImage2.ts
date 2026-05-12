@@ -1,6 +1,7 @@
 import type { ImageModelDefinition } from '../../types';
 
 export const API666_GPT_IMAGE_2_MODEL_ID = '666api/gpt-image-2';
+export const API666_GPT_IMAGE_2_TRANSPARENT_BACKGROUND_KEY = 'transparent_background';
 
 export const imageModel: ImageModelDefinition = {
   id: API666_GPT_IMAGE_2_MODEL_ID,
@@ -11,7 +12,21 @@ export const imageModel: ImageModelDefinition = {
   eta: '1min',
   expectedDurationMs: 60000,
   defaultAspectRatio: '1:1',
-  defaultResolution: '1K',
+  defaultResolution: '2K',
+  extraParamsSchema: [
+    {
+      key: API666_GPT_IMAGE_2_TRANSPARENT_BACKGROUND_KEY,
+      label: '透明背景',
+      labelKey: 'modelParams.transparentBackground',
+      type: 'boolean',
+      description: '让模型尽量输出带有 Alpha 通道的 PNG（alpha=0 背景），适合做抠图素材。',
+      descriptionKey: 'modelParams.transparentBackgroundDesc',
+      defaultValue: false,
+    },
+  ],
+  defaultExtraParams: {
+    [API666_GPT_IMAGE_2_TRANSPARENT_BACKGROUND_KEY]: false,
+  },
   aspectRatios: [
     { value: '1:1', label: '1:1' },
     { value: '9:16', label: '9:16' },

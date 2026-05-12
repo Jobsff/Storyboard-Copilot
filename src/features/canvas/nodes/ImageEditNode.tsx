@@ -56,7 +56,13 @@ import {
 import { GRSAI_NANO_BANANA_PRO_MODEL_ID } from '@/features/canvas/models/image/grsai/nanoBananaPro';
 import { FAL_NANO_BANANA_2_MODEL_ID } from '@/features/canvas/models/image/fal/nanoBanana2';
 import { KIE_NANO_BANANA_2_MODEL_ID } from '@/features/canvas/models/image/kie/nanoBanana2';
+import { API666_GPT_IMAGE_2_MODEL_ID } from '@/features/canvas/models/image/api666/gptImage2';
+import { resolve666ApiKey, resolve666ReversePromptKeyId } from '@/features/canvas/models/providers/api666';
 import { resolveModelPriceDisplay } from '@/features/canvas/pricing';
+import {
+  applyTransparentBackgroundHint,
+  TRANSPARENT_BACKGROUND_EXTRA_PARAM_KEY,
+} from '@/features/canvas/application/transparentBackground';
 import {
   NODE_CONTROL_CHIP_CLASS,
   NODE_CONTROL_ICON_CLASS,
@@ -280,8 +286,10 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     const modelId = data.model ?? DEFAULT_IMAGE_MODEL_ID;
     return getImageModel(modelId);
   }, [data.model]);
-  const providerApiKey = apiKeys[selectedModel.providerId] ?? '';
-  const effectiveExtraParams = useMemo(
+  const providerApiKey = selectedModel.providerId === '666api'
+    ? (resolve666ApiKey(selectedModel.id, apiKeys) ?? '')
+    : (apiKeys[selectedModel.providerId] ?? '');
+  const effectiveExtraParams = useMemo<Record<string, unknown>>(
     () => ({
       ...(data.extraParams ?? {}),
       ...(selectedModel.id === GRSAI_NANO_BANANA_PRO_MODEL_ID
@@ -457,7 +465,10 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
       return;
     }
 
-    const apiKey = apiKeys['666api'] ?? '';
+    const resolvedAutoPromptFormat = data.autoPromptFormat ?? 'text';
+    const resolvedAutoPromptLanguage = resolvedAutoPromptFormat === 'json' ? 'en' : 'zh';
+    const reversePromptKeyId = resolve666ReversePromptKeyId(resolvedAutoPromptFormat, resolvedAutoPromptLanguage);
+    const apiKey = apiKeys[reversePromptKeyId] || apiKeys['666api_default'] || '';
     if (!apiKey) {
       autoPromptRequestStartedRef.current = true;
       const errorMessage = t('ai.autoPrompt.apiKeyRequired');
@@ -476,7 +487,8 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         await canvasAiGateway.setApiKey('666api', apiKey);
         const prompt = await canvasAiGateway.reversePrompt('666api', {
           image: incomingImages[0],
-          language: i18n.language.startsWith('en') ? 'en' : 'zh',
+          language: resolvedAutoPromptLanguage,
+          format: resolvedAutoPromptFormat,
         });
         setPromptDraft(prompt);
         commitPromptDraft(prompt);
@@ -486,7 +498,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         const generationDebugContext: GenerationDebugContext = {
           sourceType: 'unknown',
           providerId: '666api',
-          requestModel: 'qwen3-vl-flash',
+          requestModel: 'doubao-seed-2-0-mini-260215',
           prompt: '',
           extraParams: {},
           referenceImageCount: incomingImages.length,
@@ -594,6 +606,12 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     try {
       await canvasAiGateway.setApiKey(selectedModel.providerId, providerApiKey);
 
+      const finalPrompt =
+        selectedModel.id === API666_GPT_IMAGE_2_MODEL_ID &&
+        Boolean(effectiveExtraParams[TRANSPARENT_BACKGROUND_EXTRA_PARAM_KEY])
+          ? applyTransparentBackgroundHint(prompt)
+          : prompt;
+
       let resolvedRequestAspectRatio = selectedAspectRatio.value;
       if (resolvedRequestAspectRatio === AUTO_REQUEST_ASPECT_RATIO) {
         if (incomingImages.length > 0) {
@@ -613,7 +631,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
       }
 
       const jobId = await canvasAiGateway.submitGenerateImageJob({
-        prompt,
+        prompt: finalPrompt,
         model: requestResolution.requestModel,
         size: selectedResolution.value,
         aspectRatio: resolvedRequestAspectRatio,
@@ -626,7 +644,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         requestModel: requestResolution.requestModel,
         requestSize: selectedResolution.value,
         requestAspectRatio: resolvedRequestAspectRatio,
-        prompt,
+        prompt: finalPrompt,
         extraParams: effectiveExtraParams,
         referenceImageCount: incomingImages.length,
         referenceImagePlaceholders: createReferenceImagePlaceholders(incomingImages.length),

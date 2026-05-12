@@ -9,6 +9,8 @@
     "confirm": "Confirm",
     "delete": "Delete",
     "edit": "Edit",
+    "yes": "Yes",
+    "no": "No",
     "close": "Close",
     "loading": "Loading...",
     "error": "Error",
@@ -64,6 +66,15 @@
   "nodeToolbar": {
     "reupload": "Reupload",
     "copy": "Copy",
+    "copyPrompt": "Copy prompt",
+    "info": "Info",
+    "infoTitle": "Image Info",
+    "infoProvider": "Provider",
+    "infoModel": "Model",
+    "infoAspectRatio": "Aspect Ratio",
+    "infoResolution": "Resolution",
+    "infoRequestSize": "Requested Size",
+    "infoPrompt": "Prompt",
     "copyText": "Copy Text",
     "copyErrorReport": "Copy Error",
     "copied": "Copied",
@@ -82,6 +93,8 @@
     "autoAspectRatio": "Auto",
     "quality": "Quality",
     "aspectRatio": "Aspect Ratio",
+    "transparentBackground": "Transparent background",
+    "transparentBackgroundDesc": "Ask the model to output a PNG with an alpha channel (alpha=0 background), useful for cutout assets.",
     "enableWebSearch": "Enable web search",
     "otherParams": "Other Params",
     "extraOptions": "Extra options",
@@ -91,14 +104,97 @@
     "thinkingMinimal": "Standard",
     "thinkingHigh": "High"
   },
+  "gameAsset": {
+    "menu": "Game asset templates",
+    "category": {
+      "ui": "UI assets",
+      "gameplay": "Gameplay assets",
+      "vfx": "VFX & animation",
+      "marketing": "Marketing",
+      "tech": "Tech adaptation",
+      "other": "Other"
+    },
+    "group": {
+      "ui": {
+        "basic": "Basic UI components",
+        "screens": "Screen templates",
+        "hud": "HUD components",
+        "decor": "Decorations"
+      },
+      "gameplay": {
+        "character": "Character system",
+        "monster": "Monsters & NPCs",
+        "scene": "Scenes",
+        "icons": "Items & skill icons"
+      },
+      "vfx": {
+        "particles": "Particle library",
+        "anim": "Animation sets"
+      },
+      "marketing": "Marketing assets",
+      "tech": {
+        "engine": "Engine optimization",
+        "platform": "Multi-platform"
+      },
+      "other": "Other"
+    },
+    "item": {
+      "ui": {
+        "basic_components": "Basic UI components (set)",
+        "screen_templates": "Screen templates (set)",
+        "hud_components": "HUD components (set)",
+        "decorations": "Decorations (set)"
+      },
+      "gameplay": {
+        "character_system": "Character system (set)",
+        "monsters_npcs": "Monsters & NPCs (set)",
+        "scenes": "Scenes (set)",
+        "items_skills_icons": "Items & skill icons (set)"
+      },
+      "vfx": {
+        "particle_library": "Particle library (set)",
+        "animation_sets": "Animation sets (plan)"
+      },
+      "marketing": {
+        "promo_assets": "Marketing assets (set)"
+      },
+      "tech": {
+        "engine_optimization": "Engine optimization (plan)",
+        "multi_platform": "Multi-platform (plan)"
+      },
+      "other": {
+        "misc": "Other (style refs)"
+      }
+    },
+    "dialog": {
+      "title": "Game asset templates",
+      "preview": "Prompt preview",
+      "create": "Create"
+    }
+  },
+  "spine": {
+    "import": "Import Spine",
+    "importing": "Importing...",
+    "fileType": "Spine files",
+    "invalidSelection": "Select 1 .json, 1 .atlas, and at least 1 .png",
+    "atlasImageSizeMismatch": "Atlas declared page size doesn't match actual image size. Re-export matching atlas + png.",
+    "missingTextures": "Missing textures referenced by atlas ({{count}})",
+    "importFailed": "Failed to import Spine",
+    "importFailedTitle": "Spine import failed",
+    "importRequiresTauri": "Spine import requires Tauri runtime"
+  },
   "node": {
     "menu": {
       "uploadImage": "Upload Image",
       "aiImageGeneration": "AI Image",
+      "aiVideoGeneration": "AI Video",
+      "spine": "Spine Animation",
       "storyboard": "Storyboard Node",
       "storyboardGen": "Storyboard Generation",
       "textAnnotation": "Text Annotation",
-      "autoPrompt": "Auto Reverse Prompt"
+      "autoPrompt": "Auto Reverse Prompt",
+      "autoPromptZh": "Reverse Prompt (CN)",
+      "autoPromptJson": "Reverse Prompt (JSON)"
     },
     "imageNode": {
       "title": "Image Node",
@@ -121,6 +217,26 @@
       "apiKeyRequired": "Please set API key in Settings",
       "resultTitle": "Result Image",
       "promptPlaceholder": "Describe anything you want to generate or edit"
+    },
+    "videoEdit": {
+      "promptRequired": "Please enter a prompt",
+      "apiKeyRequired": "Please set API key in Settings",
+      "referenceRequired": "Please connect a reference image first (image-to-video)",
+      "resultTitle": "Result Video",
+      "aspectRatio": "Aspect ratio",
+      "quality": "Quality",
+      "duration": "Duration",
+      "promptPlaceholder": "Describe the video you want to generate (include action, camera, pacing)",
+      "tip": "Tip: aspect ratio/quality/duration will be appended to the prompt.",
+      "referenceImagesHint": "Reference images: {{count}}",
+      "autoSwitchHint": "Auto switched to {{model}}",
+      "generate": "Generate Video",
+      "generating": "Generating..."
+    },
+    "videoNode": {
+      "waitingResult": "Waiting for output video",
+      "generating": "Generating...",
+      "generationFailed": "Generation failed"
     },
     "upload": {
       "uploadedAlt": "Uploaded image",
@@ -271,6 +387,11 @@
     "providerRegisterLink": "click here to sign up",
     "providerApiKeyGuideMiddle": ", then",
     "getApiKeyLink": "click here to get API key",
+    "api666KeyGroupDesc": "666API uses different tokens per model group. Please configure keys for each group.",
+    "api666KeyGroupGemini": "Gemini Models",
+    "api666KeyGroupGpt": "GPT Models",
+    "api666KeyGroupClaude": "Claude Models",
+    "api666KeyGroupDefault": "Default (Other Models)",
     "missingAnyApiKeyMessage": "You have not configured any API keys yet. Please open Settings to configure one.",
     "openProvidersSettings": "Open Settings",
     "aboutAppName": "Juyou Art Workshop",
@@ -358,6 +479,57 @@
       "create": "Create"
     }
   },
+  "uiAsset": {
+    "menu": "UI Design",
+    "category": {
+      "button": "Button",
+      "progress": "Progress Bar",
+      "panel": "Frame / Panel",
+      "icon": "Icon / Slot",
+      "badge": "Tag / Badge"
+    },
+    "preset": {
+      "button": {
+        "small_128x64": "Small button 128×64",
+        "normal_256x96": "Normal button 256×96",
+        "long_512x128": "Long button 512×128"
+      },
+      "progress": {
+        "short_256x48": "Short progress 256×48",
+        "long_1024x96": "Long progress 1024×96"
+      },
+      "panel": {
+        "popup_1024x768": "Popup panel 1024×768",
+        "nineslice_1024x1024": "9-slice panel 1024×1024"
+      },
+      "icon": {
+        "skill_512x512": "Skill icon 512×512",
+        "item_512x512": "Item icon 512×512",
+        "slot_256x256": "Inventory slot 256×256"
+      },
+      "badge": {
+        "new_256x96": "NEW tag base 256×96",
+        "sale_384x128": "SALE tag base 384×128",
+        "ssr_512x512": "SSR badge base 512×512"
+      }
+    },
+    "dialog": {
+      "title": "UI Asset Generation",
+      "assetType": "Asset type",
+      "spec": "Preset",
+      "targetSize": "Target size",
+      "modelAspectRatio": "Model aspect ratio",
+      "requestSize": "Request size",
+      "transparentBackground": "Transparent background",
+      "nineSlice": "9-slice",
+      "variants": "Variants/parts",
+      "subject": "What do you want to generate?",
+      "subjectPlaceholder": "e.g. Energy crystal main button",
+      "promptPreview": "Prompt preview (read-only)",
+      "negativePrompt": "Negative prompt (reserved)",
+      "generate": "Generate"
+    }
+  },
   "pricing": {
     "nativePrice": "Native: {{value}}",
     "originalPrice": "Original: {{value}}",
@@ -379,5 +551,33 @@
   "errorDialog": {
     "detailsTitle": "Error details",
     "copyReport": "Copy error report"
+  },
+  "promptCraft": {
+    "menu": "Prompt Engineer",
+    "nodeDisplayName": "Prompt Engineer",
+    "dialog": {
+      "title": "AI Prompt Engineer",
+      "category": "Image type",
+      "userInput": "Describe your requirement",
+      "userInputPlaceholder": "e.g. A cyberpunk-style tea shop poster...",
+      "craft": "Craft Prompt",
+      "crafting": "Crafting...",
+      "regenerate": "Regenerate",
+      "preview": "Prompt preview",
+      "generate": "Generate Image",
+      "emptyHint": "Enter your requirement and click \"Craft Prompt\""
+    },
+    "category": {
+      "general": "General",
+      "photography": "Photography",
+      "poster": "Poster / Typography",
+      "product": "Product / Food",
+      "ui": "UI / App Mockup",
+      "character": "Character Design",
+      "anime": "Anime / Manga",
+      "gameAsset": "Game Asset",
+      "infographic": "Infographic",
+      "illustration": "Illustration"
+    }
   }
 }

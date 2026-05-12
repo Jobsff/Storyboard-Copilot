@@ -39,24 +39,39 @@ import { prepareNodeImage } from '@/features/canvas/application/imageData';
 import {
   buildGenerationErrorReport,
   CURRENT_RUNTIME_SESSION_ID,
+  getRuntimeDiagnostics,
 } from '@/features/canvas/application/generationErrorReport';
-import { showErrorDialog } from '@/features/canvas/application/errorDialog';
+import { resolveErrorContent, showErrorDialog } from '@/features/canvas/application/errorDialog';
 import {
   getConnectMenuNodeTypes,
   nodeHasSourceHandle,
   nodeHasTargetHandle,
 } from '@/features/canvas/domain/nodeRegistry';
 import { embedStoryboardImageMetadata } from '@/commands/image';
-import { listModelProviders } from '@/features/canvas/models';
+import {
+  DEFAULT_IMAGE_MODEL_ID,
+  getImageModel,
+  listModelProviders,
+  resolveImageModelResolution,
+} from '@/features/canvas/models';
+import { API666_GPT_IMAGE_2_MODEL_ID } from '@/features/canvas/models/image/api666/gptImage2';
+import { resolve666ApiKey, API666_KEY_GROUPS } from '@/features/canvas/models/providers/api666';
 import { nodeTypes } from './nodes';
 import { edgeTypes } from './edges';
 import { NodeSelectionMenu } from './NodeSelectionMenu';
 import { SelectedNodeOverlay } from './ui/SelectedNodeOverlay';
 import { NodeToolDialog } from './ui/NodeToolDialog';
 import { ImageViewerModal } from './ui/ImageViewerModal';
+import { GameAssetPromptDialog } from './ui/GameAssetPromptDialog';
 import { StylePromptDialog } from './ui/StylePromptDialog';
+import { UiAssetPromptDialog } from './ui/UiAssetPromptDialog';
+import { PromptEngineerDialog } from './ui/PromptEngineerDialog';
 import { MissingApiKeyHint } from '@/features/settings/MissingApiKeyHint';
 import { getBuiltInStylePreset } from '@/features/canvas/styles/builtInStyles';
+import { getBuiltInGameAssetTemplate } from '@/features/canvas/gameAssets/builtInGameAssetTemplates';
+import { getBuiltInUiAssetPreset } from '@/features/canvas/uiAssets/builtInUiAssetPresets';
+import type { UiAssetNodeMeta, UiAssetPreset } from '@/features/canvas/uiAssets/types';
+import { applyTransparentBackgroundHint, TRANSPARENT_BACKGROUND_EXTRA_PARAM_KEY } from '@/features/canvas/application/transparentBackground';
 
 const DEFAULT_VIEWPORT: Viewport = { x: 0, y: 0, zoom: 1 };
 
@@ -251,6 +266,9 @@ export function Canvas() {
   const [previewConnectionVisual, setPreviewConnectionVisual] =
     useState<PreviewConnectionVisual | null>(null);
   const [styleDialogPresetId, setStyleDialogPresetId] = useState<string | null>(null);
+  const [uiAssetDialogPresetId, setUiAssetDialogPresetId] = useState<string | null>(null);
+  const [gameAssetDialogTemplateId, setGameAssetDialogTemplateId] = useState<string | null>(null);
+  const [showPromptEngineerDialog, setShowPromptEngineerDialog] = useState(false);
 
   const isRestoringCanvasRef = useRef(true);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -302,7 +320,10 @@ export function Canvas() {
   const closeImageViewer = useCanvasStore((state) => state.closeImageViewer);
   const navigateImageViewer = useCanvasStore((state) => state.navigateImageViewer);
   const apiKeys = useSettingsStore((state) => state.apiKeys);
-  const providerIds = useMemo(() => listModelProviders().map((provider) => provider.id), []);
+  const providerIds = useMemo(() => {
+    const baseIds = listModelProviders().map((provider) => provider.id);
+    return baseIds.flatMap((id) => id === '666api' ? API666_KEY_GROUPS.map((g) => g.id) : [id]);
+  }, []);
   const configuredApiKeyCount = useSettingsStore((state) =>
     getConfiguredApiKeyCount(state.apiKeys, providerIds)
   );
@@ -412,7 +433,7 @@ export function Canvas() {
       });
 
     const pendingExportNodes = nodes.filter((node) => {
-      if (node.type !== CANVAS_NODE_TYPES.exportImage) {
+      if (node.type !== CANVAS_NODE_TYPES.exportImage && node.type !== CANVAS_NODE_TYPES.exportVideo) {
         return false;
       }
       const data = node.data as Record<string, unknown>;
@@ -444,7 +465,14 @@ export function Canvas() {
               ? currentData.generationProviderId
               : '';
             if (generationProviderId) {
-              const providerApiKey = apiKeys[generationProviderId] ?? '';
+              let providerApiKey: string | undefined;
+              if (generationProviderId === '666api') {
+                const debugContext = currentData.generationDebugContext as { requestModel?: string } | undefined;
+                const model = debugContext?.requestModel ?? '';
+                providerApiKey = resolve666ApiKey(model, apiKeys);
+              } else {
+                providerApiKey = apiKeys[generationProviderId] ?? '';
+              }
               if (providerApiKey) {
                 await canvasAiGateway.setApiKey(generationProviderId, providerApiKey).catch((error) => {
                   console.warn('[GenerationJob] set_api_key failed before poll', {
@@ -456,7 +484,9 @@ export function Canvas() {
               }
             }
 
-            const status = await canvasAiGateway.getGenerateImageJob(jobId).catch((error) => {
+            const status = await (currentNode.type === CANVAS_NODE_TYPES.exportVideo
+              ? canvasAiGateway.getGenerateVideoJob(jobId)
+              : canvasAiGateway.getGenerateImageJob(jobId)).catch((error) => {
               console.warn('[GenerationJob] poll failed', { nodeId: pendingNode.id, jobId, error });
               return null;
             });
@@ -471,6 +501,20 @@ export function Canvas() {
             }
 
             if (status.status === 'succeeded' && typeof status.result === 'string' && status.result.trim()) {
+              if (currentNode.type === CANVAS_NODE_TYPES.exportVideo) {
+                updateNodeData(pendingNode.id, {
+                  videoUrl: status.result.trim(),
+                  isGenerating: false,
+                  generationStartedAt: null,
+                  generationJobId: null,
+                  generationProviderId: null,
+                  generationClientSessionId: null,
+                  generationStoryboardMetadata: undefined,
+                  generationError: null,
+                  generationErrorDetails: null,
+                });
+                break;
+              }
               const prepared = await prepareNodeImage(status.result);
               const storyboardMetadataRaw = currentData.generationStoryboardMetadata as GenerationStoryboardMetadata | undefined;
               const hasStoryboardMetadata = Boolean(
@@ -509,7 +553,6 @@ export function Canvas() {
                 generationStoryboardMetadata: undefined,
                 generationError: null,
                 generationErrorDetails: null,
-                generationDebugContext: undefined,
               });
               break;
             }
@@ -1054,12 +1097,164 @@ export function Canvas() {
     setStyleDialogPresetId(styleId);
   }, []);
 
+  const handleUiAssetPresetSelect = useCallback((presetId: string) => {
+    setShowNodeMenu(false);
+    setMenuAllowedTypes(undefined);
+    setPendingConnectStart(null);
+    setPreviewConnectionVisual(null);
+    setUiAssetDialogPresetId(presetId);
+  }, []);
+
+  const handleGameAssetTemplateSelect = useCallback((templateId: string) => {
+    setShowNodeMenu(false);
+    setMenuAllowedTypes(undefined);
+    setPendingConnectStart(null);
+    setPreviewConnectionVisual(null);
+    setGameAssetDialogTemplateId(templateId);
+  }, []);
+
+  const handlePromptEngineerSelect = useCallback(() => {
+    setShowNodeMenu(false);
+    setMenuAllowedTypes(undefined);
+    setPendingConnectStart(null);
+    setPreviewConnectionVisual(null);
+    setShowPromptEngineerDialog(true);
+  }, []);
+
   const styleDialogPreset = useMemo(() => {
     if (!styleDialogPresetId) {
       return null;
     }
     return getBuiltInStylePreset(styleDialogPresetId);
   }, [styleDialogPresetId]);
+
+  const uiAssetDialogPreset = useMemo(() => {
+    if (!uiAssetDialogPresetId) {
+      return null;
+    }
+    return getBuiltInUiAssetPreset(uiAssetDialogPresetId);
+  }, [uiAssetDialogPresetId]);
+
+  const gameAssetDialogTemplate = useMemo(() => {
+    if (!gameAssetDialogTemplateId) {
+      return null;
+    }
+    return getBuiltInGameAssetTemplate(gameAssetDialogTemplateId);
+  }, [gameAssetDialogTemplateId]);
+
+  const handleUiAssetDialogConfirm = useCallback(
+    async (subject: string, prompt: string, preset: UiAssetPreset) => {
+      const modelId = preset.modelConfig.modelId ?? DEFAULT_IMAGE_MODEL_ID;
+      const selectedModel = getImageModel(modelId);
+      const providerApiKey = selectedModel.providerId === '666api'
+        ? resolve666ApiKey(modelId, apiKeys)
+        : (apiKeys[selectedModel.providerId] ?? '');
+      if (!providerApiKey) {
+        const errorMessage = t('node.imageEdit.apiKeyRequired');
+        void showErrorDialog(errorMessage, t('common.error'));
+        return;
+      }
+
+      const generationDurationMs = selectedModel.expectedDurationMs ?? 60000;
+      const generationStartedAt = Date.now();
+      const runtimeDiagnostics = await getRuntimeDiagnostics();
+
+      const uiAssetMeta: UiAssetNodeMeta = {
+        assetType: preset.assetType,
+        presetId: preset.id,
+        targetSize: { ...preset.targetSize },
+        modelAspectRatio: preset.modelConfig.aspectRatio,
+        requestSize: preset.modelConfig.requestSize,
+        postprocess: preset.postprocess,
+        prompt,
+        negativePrompt: preset.negativePrompt,
+        variants: preset.variants,
+      };
+
+      const newNodeId = addNode(CANVAS_NODE_TYPES.exportImage, flowPosition, {
+        isGenerating: true,
+        generationStartedAt,
+        generationDurationMs,
+        resultKind: 'generic',
+        displayName: `${t(preset.labelKey)} - ${subject}`,
+        aspectRatio: preset.modelConfig.aspectRatio,
+        uiAssetMeta,
+      });
+      setSelectedNode(newNodeId);
+      scheduleCanvasPersist(0);
+      setUiAssetDialogPresetId(null);
+
+      try {
+        await canvasAiGateway.setApiKey(selectedModel.providerId, providerApiKey);
+        const requestResolution = resolveImageModelResolution(
+          selectedModel,
+          preset.modelConfig.requestSize
+        );
+        const request = selectedModel.resolveRequest({ referenceImageCount: 0 });
+        const jobId = await canvasAiGateway.submitGenerateImageJob({
+          prompt,
+          model: request.requestModel,
+          size: requestResolution.value,
+          aspectRatio: preset.modelConfig.aspectRatio,
+          referenceImages: [],
+          extraParams: {},
+        });
+
+        updateNodeData(newNodeId, {
+          generationJobId: jobId,
+          generationSourceType: 'uiAssetPreset',
+          generationProviderId: selectedModel.providerId,
+          generationClientSessionId: CURRENT_RUNTIME_SESSION_ID,
+          generationDebugContext: {
+            sourceType: 'uiAssetPreset',
+            providerId: selectedModel.providerId,
+            requestModel: request.requestModel,
+            requestSize: requestResolution.value,
+            requestAspectRatio: preset.modelConfig.aspectRatio,
+            prompt,
+            extraParams: { uiAssetPresetId: preset.id },
+            referenceImageCount: 0,
+            appVersion: runtimeDiagnostics.appVersion,
+            osName: runtimeDiagnostics.osName,
+            osVersion: runtimeDiagnostics.osVersion,
+            osBuild: runtimeDiagnostics.osBuild,
+            userAgent: runtimeDiagnostics.userAgent,
+          },
+        });
+      } catch (generationError) {
+        const resolvedError = resolveErrorContent(generationError, t('ai.error'));
+        const reportText = buildGenerationErrorReport({
+          errorMessage: resolvedError.message,
+          errorDetails: resolvedError.details,
+          context: uiAssetMeta,
+        });
+        void showErrorDialog(
+          resolvedError.message,
+          t('common.error'),
+          resolvedError.details,
+          reportText
+        );
+        updateNodeData(newNodeId, {
+          isGenerating: false,
+          generationStartedAt: null,
+          generationJobId: null,
+          generationProviderId: null,
+          generationClientSessionId: null,
+          generationError: resolvedError.message,
+          generationErrorDetails: resolvedError.details ?? null,
+        });
+      }
+    },
+    [
+      addNode,
+      apiKeys,
+      flowPosition,
+      scheduleCanvasPersist,
+      setSelectedNode,
+      t,
+      updateNodeData,
+    ]
+  );
 
   const duplicateNodes = useCallback(
     (sourceNodeIds: string[], options: DuplicateOptions = {}) => {
@@ -1683,7 +1878,10 @@ export function Canvas() {
           position={menuPosition}
           allowedTypes={menuAllowedTypes}
           onSelect={handleNodeSelect}
-          onSelectStyle={handleStyleSelect}
+          onSelectStyle={undefined}
+          onSelectGameAssetTemplate={handleGameAssetTemplateSelect}
+          onSelectUiAssetPreset={undefined}
+          onSelectPromptEngineer={handlePromptEngineerSelect}
           onClose={() => {
             setShowNodeMenu(false);
             setMenuAllowedTypes(undefined);
@@ -1699,13 +1897,62 @@ export function Canvas() {
         onClose={() => setStyleDialogPresetId(null)}
         onConfirm={(subject, prompt, preset) => {
           const newNodeId = addNode(CANVAS_NODE_TYPES.imageEdit, flowPosition, {
-            prompt,
+            prompt: applyTransparentBackgroundHint(prompt),
             displayName: `${t(preset.labelKey)} - ${subject}`,
             stylePresetId: preset.id,
             stylePresetVersion: preset.version,
+            model: API666_GPT_IMAGE_2_MODEL_ID,
+            extraParams: {
+              [TRANSPARENT_BACKGROUND_EXTRA_PARAM_KEY]: true,
+            },
           });
           scheduleCanvasPersist(0);
           setStyleDialogPresetId(null);
+          setSelectedNode(newNodeId);
+        }}
+      />
+
+      <GameAssetPromptDialog
+        isOpen={Boolean(gameAssetDialogTemplateId)}
+        template={gameAssetDialogTemplate}
+        onClose={() => setGameAssetDialogTemplateId(null)}
+        onConfirm={(prompt, template) => {
+          const newNodeId = addNode(CANVAS_NODE_TYPES.imageEdit, flowPosition, {
+            prompt,
+            displayName: t(template.labelKey),
+            model: API666_GPT_IMAGE_2_MODEL_ID,
+            extraParams: {
+              [TRANSPARENT_BACKGROUND_EXTRA_PARAM_KEY]: template.defaultTransparentBackground,
+            },
+          });
+          scheduleCanvasPersist(0);
+          setGameAssetDialogTemplateId(null);
+          setSelectedNode(newNodeId);
+        }}
+      />
+
+      <UiAssetPromptDialog
+        isOpen={Boolean(uiAssetDialogPresetId)}
+        preset={uiAssetDialogPreset}
+        onClose={() => setUiAssetDialogPresetId(null)}
+        onConfirm={(subject, prompt, preset) => {
+          void handleUiAssetDialogConfirm(subject, prompt, preset);
+        }}
+      />
+
+      <PromptEngineerDialog
+        isOpen={showPromptEngineerDialog}
+        apiKey={apiKeys['666api_default'] ?? ''}
+        onClose={() => setShowPromptEngineerDialog(false)}
+        onConfirm={(prompt) => {
+          const newNodeId = addNode(CANVAS_NODE_TYPES.imageEdit, flowPosition, {
+            prompt,
+            displayName: t('promptCraft.nodeDisplayName'),
+            model: API666_GPT_IMAGE_2_MODEL_ID,
+            extraParams: {},
+          });
+          scheduleCanvasPersist(0);
+          setShowPromptEngineerDialog(false);
           setSelectedNode(newNodeId);
         }}
       />

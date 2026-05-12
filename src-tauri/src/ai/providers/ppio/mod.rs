@@ -54,6 +54,8 @@ impl Default for PPIOProvider {
 
 #[async_trait::async_trait]
 impl AIProvider for PPIOProvider {
+    fn as_any(&self) -> &dyn std::any::Any { self }
+
     fn name(&self) -> &str {
         "ppio"
     }

@@ -143,6 +143,8 @@ impl Default for FalProvider {
 
 #[async_trait::async_trait]
 impl AIProvider for FalProvider {
+    fn as_any(&self) -> &dyn std::any::Any { self }
+
     fn name(&self) -> &str {
         "fal"
     }

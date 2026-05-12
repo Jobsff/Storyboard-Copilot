@@ -6,8 +6,11 @@ import {
   type CanvasNodeData,
   type CanvasNodeType,
   type ExportImageNodeData,
+  type ExportVideoNodeData,
   type GroupNodeData,
   type ImageEditNodeData,
+  type SpineNodeData,
+  type VideoEditNodeData,
   type StoryboardSplitNodeData,
   type StoryboardGenNodeData,
   type TextAnnotationNodeData,
@@ -16,7 +19,7 @@ import {
 import { DEFAULT_NODE_DISPLAY_NAME } from './nodeDisplay';
 import { DEFAULT_IMAGE_MODEL_ID } from '../models';
 
-export type MenuIconKey = 'upload' | 'sparkles' | 'layout' | 'text';
+export type MenuIconKey = 'upload' | 'sparkles' | 'layout' | 'text' | 'video' | 'wand';
 
 export interface CanvasNodeCapabilities {
   toolbar: boolean;
@@ -117,6 +120,43 @@ const imageAutoPromptNodeDefinition: CanvasNodeDefinition<ImageEditNodeData> = {
     sourceHandle: true,
     targetHandle: true,
     connectMenu: {
+      fromSource: false,
+      fromTarget: false,
+    },
+  },
+  createDefaultData: () => ({
+    displayName: DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.imageEdit],
+    imageUrl: null,
+    previewImageUrl: null,
+    aspectRatio: DEFAULT_ASPECT_RATIO,
+    isSizeManuallyAdjusted: false,
+    requestAspectRatio: AUTO_REQUEST_ASPECT_RATIO,
+    prompt: '',
+    model: DEFAULT_IMAGE_MODEL_ID,
+    size: '2K' as ImageSize,
+    extraParams: {},
+    autoPrompt: true,
+    autoPromptFormat: 'text',
+    autoPromptRunning: false,
+    isGenerating: false,
+    generationStartedAt: null,
+    generationDurationMs: 60000,
+  }),
+};
+
+const imageAutoPromptZhNodeDefinition: CanvasNodeDefinition<ImageEditNodeData> = {
+  type: CANVAS_NODE_TYPES.imageAutoPromptZh,
+  menuLabelKey: 'node.menu.autoPromptZh',
+  menuIcon: 'sparkles',
+  visibleInMenu: false,
+  capabilities: {
+    toolbar: true,
+    promptInput: true,
+  },
+  connectivity: {
+    sourceHandle: true,
+    targetHandle: true,
+    connectMenu: {
       fromSource: true,
       fromTarget: false,
     },
@@ -133,6 +173,44 @@ const imageAutoPromptNodeDefinition: CanvasNodeDefinition<ImageEditNodeData> = {
     size: '2K' as ImageSize,
     extraParams: {},
     autoPrompt: true,
+    autoPromptFormat: 'text',
+    autoPromptRunning: false,
+    isGenerating: false,
+    generationStartedAt: null,
+    generationDurationMs: 60000,
+  }),
+};
+
+const imageAutoPromptJsonNodeDefinition: CanvasNodeDefinition<ImageEditNodeData> = {
+  type: CANVAS_NODE_TYPES.imageAutoPromptJson,
+  menuLabelKey: 'node.menu.autoPromptJson',
+  menuIcon: 'sparkles',
+  visibleInMenu: false,
+  capabilities: {
+    toolbar: true,
+    promptInput: true,
+  },
+  connectivity: {
+    sourceHandle: true,
+    targetHandle: true,
+    connectMenu: {
+      fromSource: true,
+      fromTarget: false,
+    },
+  },
+  createDefaultData: () => ({
+    displayName: DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.imageEdit],
+    imageUrl: null,
+    previewImageUrl: null,
+    aspectRatio: DEFAULT_ASPECT_RATIO,
+    isSizeManuallyAdjusted: false,
+    requestAspectRatio: AUTO_REQUEST_ASPECT_RATIO,
+    prompt: '',
+    model: DEFAULT_IMAGE_MODEL_ID,
+    size: '2K' as ImageSize,
+    extraParams: {},
+    autoPrompt: true,
+    autoPromptFormat: 'json',
     autoPromptRunning: false,
     isGenerating: false,
     generationStartedAt: null,
@@ -164,6 +242,93 @@ const exportImageNodeDefinition: CanvasNodeDefinition<ExportImageNodeData> = {
     aspectRatio: DEFAULT_ASPECT_RATIO,
     isSizeManuallyAdjusted: false,
     resultKind: 'generic',
+  }),
+};
+
+const videoEditNodeDefinition: CanvasNodeDefinition<VideoEditNodeData> = {
+  type: CANVAS_NODE_TYPES.videoEdit,
+  menuLabelKey: 'node.menu.aiVideoGeneration',
+  menuIcon: 'video',
+  visibleInMenu: true,
+  capabilities: {
+    toolbar: true,
+    promptInput: false,
+  },
+  connectivity: {
+    sourceHandle: true,
+    targetHandle: true,
+    connectMenu: {
+      fromSource: true,
+      fromTarget: false,
+    },
+  },
+  createDefaultData: () => ({
+    displayName: DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.videoEdit],
+    prompt: '',
+    model: '666api/wan2.6-i2v-flash',
+    aspectRatio: '16:9',
+    quality: '720p',
+    durationSeconds: 5,
+    extraParams: {},
+  }),
+};
+
+const exportVideoNodeDefinition: CanvasNodeDefinition<ExportVideoNodeData> = {
+  type: CANVAS_NODE_TYPES.exportVideo,
+  menuLabelKey: 'node.menu.aiVideoGeneration',
+  menuIcon: 'video',
+  visibleInMenu: false,
+  capabilities: {
+    toolbar: true,
+    promptInput: false,
+  },
+  connectivity: {
+    sourceHandle: true,
+    targetHandle: true,
+    connectMenu: {
+      fromSource: false,
+      fromTarget: false,
+    },
+  },
+  createDefaultData: () => ({
+    displayName: DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.exportVideo],
+    videoUrl: null,
+    posterImageUrl: null,
+    aspectRatio: '16:9',
+    isSizeManuallyAdjusted: false,
+    isGenerating: false,
+    generationStartedAt: null,
+    generationDurationMs: 60000,
+  }),
+};
+
+const spineNodeDefinition: CanvasNodeDefinition<SpineNodeData> = {
+  type: CANVAS_NODE_TYPES.spine,
+  menuLabelKey: 'node.menu.spine',
+  menuIcon: 'layout',
+  visibleInMenu: true,
+  capabilities: {
+    toolbar: true,
+    promptInput: false,
+  },
+  connectivity: {
+    sourceHandle: true,
+    targetHandle: true,
+    connectMenu: {
+      fromSource: false,
+      fromTarget: false,
+    },
+  },
+  createDefaultData: () => ({
+    displayName: DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.spine],
+    spineJsonPath: null,
+    spineAtlasPath: null,
+    spineTexturePaths: [],
+    spineAnimation: null,
+    spineSkin: null,
+    loop: true,
+    timeScale: 1,
+    error: null,
   }),
 };
 
@@ -292,7 +457,12 @@ export const canvasNodeDefinitions: Record<CanvasNodeType, CanvasNodeDefinition>
   [CANVAS_NODE_TYPES.upload]: uploadNodeDefinition,
   [CANVAS_NODE_TYPES.imageEdit]: imageEditNodeDefinition,
   [CANVAS_NODE_TYPES.imageAutoPrompt]: imageAutoPromptNodeDefinition,
+  [CANVAS_NODE_TYPES.imageAutoPromptZh]: imageAutoPromptZhNodeDefinition,
+  [CANVAS_NODE_TYPES.imageAutoPromptJson]: imageAutoPromptJsonNodeDefinition,
   [CANVAS_NODE_TYPES.exportImage]: exportImageNodeDefinition,
+  [CANVAS_NODE_TYPES.videoEdit]: videoEditNodeDefinition,
+  [CANVAS_NODE_TYPES.exportVideo]: exportVideoNodeDefinition,
+  [CANVAS_NODE_TYPES.spine]: spineNodeDefinition,
   [CANVAS_NODE_TYPES.textAnnotation]: textAnnotationNodeDefinition,
   [CANVAS_NODE_TYPES.group]: groupNodeDefinition,
   [CANVAS_NODE_TYPES.storyboardSplit]: storyboardSplitDefinition,

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use commands::ai as ai_commands;
+use commands::assets;
 use commands::image;
 use commands::project_state;
 use commands::system;
@@ -176,10 +177,14 @@ pub fn run() {
             image::save_image_source_to_directory,
             image::save_image_source_to_app_debug_dir,
             image::copy_image_source_to_clipboard,
+            assets::persist_spine_package_files,
             ai_commands::set_api_key,
             ai_commands::reverse_prompt,
+            ai_commands::craft_image_prompt,
             ai_commands::submit_generate_image_job,
             ai_commands::get_generate_image_job,
+            ai_commands::submit_generate_video_job,
+            ai_commands::get_generate_video_job,
             ai_commands::generate_image,
             ai_commands::list_models,
             project_state::list_project_summaries,

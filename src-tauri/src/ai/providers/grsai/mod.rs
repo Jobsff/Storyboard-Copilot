@@ -295,6 +295,8 @@ impl Default for GrsaiProvider {
 
 #[async_trait::async_trait]
 impl AIProvider for GrsaiProvider {
+    fn as_any(&self) -> &dyn std::any::Any { self }
+
     fn name(&self) -> &str {
         "grsai"
     }

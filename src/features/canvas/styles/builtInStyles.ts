@@ -30,7 +30,7 @@ export const builtInStyleCategories: BuiltInStyleCategory[] = [
   { id: 'scene', labelKey: 'style.category.scene' },
 ];
 
-const CUTOUT_BACKGROUND_HINT = '纯色背景，主体与背景之间有轻微柔和投影，主体边缘清晰';
+const CUTOUT_BACKGROUND_HINT = '主体边缘清晰，中心构图，留白干净';
 
 export const builtInStylePresets: BuiltInStylePreset[] = [
   {
@@ -47,7 +47,7 @@ export const builtInStylePresets: BuiltInStylePreset[] = [
     categoryId: 'uiIcon',
     labelKey: 'style.item.uiIcon.flatSymbolic',
     template:
-      `{subject}，扁平化图标，2-3层色块分层，少量阴影投射，轮廓清晰，细节克制，图形符号化，游戏UI图标，${CUTOUT_BACKGROUND_HINT}`,
+      `{subject}，扁平化图标，2-3层色块分层，少量层次变化，轮廓清晰，细节克制，图形符号化，游戏UI图标，${CUTOUT_BACKGROUND_HINT}`,
   },
   {
     id: 'uiPanel.flatRoundedOutline',
@@ -55,7 +55,7 @@ export const builtInStylePresets: BuiltInStylePreset[] = [
     categoryId: 'uiPanel',
     labelKey: 'style.item.uiPanel.flatRoundedOutline',
     template:
-      `{subject}，UI按钮风格，圆角矩形，扁平化，清晰描边，层级分明（底色+描边+高光/阴影），适合点击反馈的结构，${CUTOUT_BACKGROUND_HINT}`,
+      `{subject}，UI按钮风格，圆角矩形，扁平化，清晰描边，层级分明（底色+描边+高光+暗部），适合点击反馈的结构，${CUTOUT_BACKGROUND_HINT}`,
   },
   {
     id: 'uiPanel.thickPaintPanelLightDecor',
@@ -79,7 +79,7 @@ export const builtInStylePresets: BuiltInStylePreset[] = [
     categoryId: 'avatar',
     labelKey: 'style.item.avatar.animeCelClean',
     template:
-      `{subject}，二次元赛璐璐头像，线条干净，硬边阴影，眼神有高光，配色统一，轮廓清晰，居中构图，${CUTOUT_BACKGROUND_HINT}`,
+      `{subject}，二次元赛璐璐头像，线条干净，硬边明暗分区，眼神有高光，配色统一，轮廓清晰，居中构图，${CUTOUT_BACKGROUND_HINT}`,
   },
   {
     id: 'character.chibiThickPaint',
@@ -95,7 +95,7 @@ export const builtInStylePresets: BuiltInStylePreset[] = [
     categoryId: 'character',
     labelKey: 'style.item.character.celActionPose',
     template:
-      `{subject}，赛璐璐上色角色立绘，动作姿态明确，硬边阴影，高光集中，线条清晰，细节有重点但不杂乱，适合塔防/割草风格，${CUTOUT_BACKGROUND_HINT}`,
+      `{subject}，赛璐璐上色角色立绘，动作姿态明确，硬边明暗分区，高光集中，线条清晰，细节有重点但不杂乱，适合塔防/割草风格，${CUTOUT_BACKGROUND_HINT}`,
   },
   {
     id: 'monster.chibiStrongSilhouette',
@@ -111,7 +111,7 @@ export const builtInStylePresets: BuiltInStylePreset[] = [
     categoryId: 'monster',
     labelKey: 'style.item.monster.celThreatClean',
     template:
-      `{subject}，赛璐璐上色怪物，硬边阴影，结构清晰，威胁感强但细节可控，轮廓明确，${CUTOUT_BACKGROUND_HINT}`,
+      `{subject}，赛璐璐上色怪物，硬边明暗分区，结构清晰，威胁感强但细节可控，轮廓明确，${CUTOUT_BACKGROUND_HINT}`,
   },
   {
     id: 'prop.thickPaintMaterialClear',
@@ -143,7 +143,7 @@ export const builtInStylePresets: BuiltInStylePreset[] = [
     categoryId: 'scene',
     labelKey: 'style.item.scene.flatModular',
     template:
-      '{subject}，扁平化场景插画，模块化块面，层级分明，低细节噪点，配色统一，适合做关卡底图或背景',
+      '{subject}，扁平化场景插画，模块化块面，层级分明，低细节噪点，配色统一，适合做关卡底图',
   },
 ];
 

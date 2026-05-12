@@ -88,6 +88,12 @@ fn ensure_projects_table(conn: &Connection) -> Result<(), String> {
           PRIMARY KEY(project_id, path)
         );
         CREATE INDEX IF NOT EXISTS idx_project_image_refs_path ON project_image_refs(path);
+        CREATE TABLE IF NOT EXISTS project_asset_refs (
+          project_id TEXT NOT NULL,
+          path TEXT NOT NULL,
+          PRIMARY KEY(project_id, path)
+        );
+        CREATE INDEX IF NOT EXISTS idx_project_asset_refs_path ON project_asset_refs(path);
         "#,
     )
     .map_err(|e| format!("Failed to initialize projects table: {}", e))?;
@@ -153,6 +159,39 @@ fn resolve_image_ref(value: &str, image_pool: &[String]) -> Option<String> {
     Some(value.to_string())
 }
 
+fn parse_asset_pool(history_json: &str) -> Vec<String> {
+    let parsed: serde_json::Value = match serde_json::from_str(history_json) {
+        Ok(value) => value,
+        Err(_) => return Vec::new(),
+    };
+
+    parsed
+        .get("assetPool")
+        .and_then(|value| value.as_array())
+        .map(|array| {
+            array
+                .iter()
+                .filter_map(|value| value.as_str().map(|item| item.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn resolve_asset_ref(value: &str, asset_pool: &[String]) -> Option<String> {
+    const ASSET_REF_PREFIX: &str = "__asset_ref__:";
+
+    if let Some(index_text) = value.strip_prefix(ASSET_REF_PREFIX) {
+        let index = index_text.parse::<usize>().ok()?;
+        return asset_pool.get(index).cloned();
+    }
+
+    if value.trim().is_empty() {
+        return None;
+    }
+
+    Some(value.to_string())
+}
+
 fn collect_image_paths_from_nodes(
     nodes: &[serde_json::Value],
     image_pool: &[String],
@@ -190,6 +229,38 @@ fn collect_image_paths_from_nodes(
     }
 }
 
+fn collect_asset_paths_from_nodes(
+    nodes: &[serde_json::Value],
+    asset_pool: &[String],
+    paths: &mut HashSet<String>,
+) {
+    for node in nodes {
+        let data = match node.get("data").and_then(|value| value.as_object()) {
+            Some(value) => value,
+            None => continue,
+        };
+
+        for key in ["spineJsonPath", "spineAtlasPath"] {
+            if let Some(raw_value) = data.get(key).and_then(|value| value.as_str()) {
+                if let Some(path) = resolve_asset_ref(raw_value, asset_pool) {
+                    paths.insert(path);
+                }
+            }
+        }
+
+        if let Some(textures) = data.get("spineTexturePaths").and_then(|value| value.as_array()) {
+            for texture_value in textures {
+                let Some(raw_value) = texture_value.as_str() else {
+                    continue;
+                };
+                if let Some(path) = resolve_asset_ref(raw_value, asset_pool) {
+                    paths.insert(path);
+                }
+            }
+        }
+    }
+}
+
 fn extract_project_image_paths(nodes_json: &str, history_json: &str) -> HashSet<String> {
     let image_pool = parse_image_pool(history_json);
     let mut paths = HashSet::new();
@@ -211,6 +282,34 @@ fn extract_project_image_paths(nodes_json: &str, history_json: &str) -> HashSet<
                     continue;
                 };
                 collect_image_paths_from_nodes(nodes, &image_pool, &mut paths);
+            }
+        }
+    }
+
+    paths
+}
+
+fn extract_project_asset_paths(nodes_json: &str, history_json: &str) -> HashSet<String> {
+    let asset_pool = parse_asset_pool(history_json);
+    let mut paths = HashSet::new();
+
+    if let Ok(parsed_nodes) = serde_json::from_str::<serde_json::Value>(nodes_json) {
+        if let Some(nodes) = parsed_nodes.as_array() {
+            collect_asset_paths_from_nodes(nodes, &asset_pool, &mut paths);
+        }
+    }
+
+    if let Ok(parsed_history) = serde_json::from_str::<serde_json::Value>(history_json) {
+        for timeline_key in ["past", "future"] {
+            let Some(timeline) = parsed_history.get(timeline_key).and_then(|value| value.as_array()) else {
+                continue;
+            };
+
+            for snapshot in timeline {
+                let Some(nodes) = snapshot.get("nodes").and_then(|value| value.as_array()) else {
+                    continue;
+                };
+                collect_asset_paths_from_nodes(nodes, &asset_pool, &mut paths);
             }
         }
     }
@@ -264,6 +363,104 @@ fn prune_unreferenced_images(app: &AppHandle) -> Result<(), String> {
         }
     }
 
+    Ok(())
+}
+
+fn resolve_spine_assets_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data dir: {}", e))?;
+
+    let assets_dir = app_data_dir.join("assets").join("spine");
+    std::fs::create_dir_all(&assets_dir)
+        .map_err(|e| format!("Failed to create spine assets dir: {}", e))?;
+    Ok(assets_dir)
+}
+
+fn collect_files_recursively(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("Failed to read dir {}: {}", dir.display(), e))?;
+    for entry_result in entries {
+        let entry = entry_result.map_err(|e| format!("Failed to iterate dir {}: {}", dir.display(), e))?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files_recursively(&path, files)?;
+            continue;
+        }
+        if path.is_file() {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn prune_empty_directories(dir: &Path) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("Failed to read dir {}: {}", dir.display(), e))?;
+    let mut subdirs: Vec<PathBuf> = Vec::new();
+    let mut has_files = false;
+    for entry_result in entries {
+        let entry = entry_result.map_err(|e| format!("Failed to iterate dir {}: {}", dir.display(), e))?;
+        let path = entry.path();
+        if path.is_dir() {
+            subdirs.push(path);
+            continue;
+        }
+        if path.is_file() {
+            has_files = true;
+        }
+    }
+
+    for subdir in subdirs {
+        prune_empty_directories(&subdir)?;
+    }
+
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("Failed to read dir {}: {}", dir.display(), e))?;
+    let mut has_any = false;
+    for entry_result in entries {
+        let entry = entry_result.map_err(|e| format!("Failed to iterate dir {}: {}", dir.display(), e))?;
+        let path = entry.path();
+        if path.is_file() || path.is_dir() {
+            has_any = true;
+            break;
+        }
+    }
+
+    if !has_files && !has_any {
+        let _ = std::fs::remove_dir(dir);
+    }
+
+    Ok(())
+}
+
+fn prune_unreferenced_assets(app: &AppHandle) -> Result<(), String> {
+    let conn = open_db(app)?;
+    let mut stmt = conn
+        .prepare("SELECT DISTINCT path FROM project_asset_refs")
+        .map_err(|e| format!("Failed to prepare asset refs query: {}", e))?;
+
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| format!("Failed to query asset refs: {}", e))?;
+
+    let mut referenced = HashSet::new();
+    for path_result in rows {
+        let path = path_result.map_err(|e| format!("Failed to decode asset ref row: {}", e))?;
+        referenced.insert(path);
+    }
+
+    let assets_dir = resolve_spine_assets_dir(app)?;
+    let mut files = Vec::new();
+    collect_files_recursively(&assets_dir, &mut files)?;
+
+    for path in files {
+        let path_string = path.to_string_lossy().to_string();
+        if !referenced.contains(&path_string) {
+            std::fs::remove_file(&path)
+                .map_err(|e| format!("Failed to delete unreferenced asset: {}", e))?;
+        }
+    }
+
+    prune_empty_directories(&assets_dir)?;
     Ok(())
 }
 
@@ -379,6 +576,7 @@ pub fn get_project_record(
 pub fn upsert_project_record(app: AppHandle, record: ProjectRecord) -> Result<(), String> {
     let mut conn = open_db(&app)?;
     let image_paths = extract_project_image_paths(&record.nodes_json, &record.history_json);
+    let asset_paths = extract_project_asset_paths(&record.nodes_json, &record.history_json);
     let tx = conn
         .transaction()
         .map_err(|e| format!("Failed to begin transaction: {}", e))?;
@@ -435,10 +633,25 @@ pub fn upsert_project_record(app: AppHandle, record: ProjectRecord) -> Result<()
         .map_err(|e| format!("Failed to upsert project image ref: {}", e))?;
     }
 
+    tx.execute(
+        "DELETE FROM project_asset_refs WHERE project_id = ?1",
+        params![record.id],
+    )
+    .map_err(|e| format!("Failed to clear project asset refs: {}", e))?;
+
+    for path in asset_paths {
+        tx.execute(
+            "INSERT OR IGNORE INTO project_asset_refs (project_id, path) VALUES (?1, ?2)",
+            params![record.id, path],
+        )
+        .map_err(|e| format!("Failed to upsert project asset ref: {}", e))?;
+    }
+
     tx.commit()
         .map_err(|e| format!("Failed to commit upsert transaction: {}", e))?;
 
     prune_unreferenced_images(&app)?;
+    prune_unreferenced_assets(&app)?;
     Ok(())
 }
 
@@ -488,10 +701,17 @@ pub fn delete_project_record(app: AppHandle, project_id: String) -> Result<(), S
     )
     .map_err(|e| format!("Failed to delete project image refs: {}", e))?;
 
+    tx.execute(
+        "DELETE FROM project_asset_refs WHERE project_id = ?1",
+        params![project_id],
+    )
+    .map_err(|e| format!("Failed to delete project asset refs: {}", e))?;
+
     tx.commit()
         .map_err(|e| format!("Failed to commit delete transaction: {}", e))?;
 
     prune_unreferenced_images(&app)?;
+    prune_unreferenced_assets(&app)?;
     Ok(())
 }
 
@@ -600,6 +820,124 @@ fn rewrite_history_value_image_paths(
     }
 }
 
+fn extract_spine_asset_relative_path(raw: &str) -> Option<PathBuf> {
+    let normalized = raw.replace('\\', "/");
+    let marker = "assets/spine/";
+    let start = normalized.find(marker)?;
+    let rel = normalized[(start + marker.len())..].trim_start_matches('/');
+    if rel.is_empty() || rel.contains("..") {
+        return None;
+    }
+    Some(PathBuf::from(rel))
+}
+
+fn update_asset_field_if_needed(obj: &mut serde_json::Map<String, serde_json::Value>, key: &str, assets_dir: &Path) {
+    const ASSET_REF_PREFIX: &str = "__asset_ref__:";
+
+    let Some(value) = obj.get(key) else {
+        return;
+    };
+    let Some(raw) = value.as_str() else {
+        return;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.starts_with(ASSET_REF_PREFIX) {
+        return;
+    }
+
+    let Some(rel) = extract_spine_asset_relative_path(trimmed) else {
+        return;
+    };
+
+    let next_path = assets_dir.join(rel).to_string_lossy().to_string();
+    obj.insert(key.to_string(), serde_json::Value::String(next_path));
+}
+
+fn rewrite_nodes_value_asset_paths(nodes_value: &mut serde_json::Value, assets_dir: &Path) {
+    let Some(nodes) = nodes_value.as_array_mut() else {
+        return;
+    };
+
+    for node in nodes {
+        let Some(node_obj) = node.as_object_mut() else {
+            continue;
+        };
+        let Some(data) = node_obj.get_mut("data").and_then(|value| value.as_object_mut()) else {
+            continue;
+        };
+
+        for key in ["spineJsonPath", "spineAtlasPath"] {
+            update_asset_field_if_needed(data, key, assets_dir);
+        }
+
+        if let Some(textures) = data.get_mut("spineTexturePaths").and_then(|value| value.as_array_mut()) {
+            for texture in textures.iter_mut() {
+                let Some(raw) = texture.as_str() else {
+                    continue;
+                };
+                let trimmed = raw.trim();
+                if trimmed.is_empty() || trimmed.starts_with("__asset_ref__:") {
+                    continue;
+                }
+                if let Some(rel) = extract_spine_asset_relative_path(trimmed) {
+                    *texture = serde_json::Value::String(assets_dir.join(rel).to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+}
+
+fn rewrite_history_value_asset_paths(history_value: &mut serde_json::Value, assets_dir: &Path) {
+    if let Some(pool) = history_value.get_mut("assetPool").and_then(|value| value.as_array_mut()) {
+        for item in pool.iter_mut() {
+            let Some(raw) = item.as_str() else {
+                continue;
+            };
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Some(rel) = extract_spine_asset_relative_path(trimmed) {
+                *item = serde_json::Value::String(assets_dir.join(rel).to_string_lossy().to_string());
+            }
+        }
+    }
+
+    for timeline_key in ["past", "future"] {
+        let Some(timeline) = history_value.get_mut(timeline_key).and_then(|value| value.as_array_mut()) else {
+            continue;
+        };
+
+        for snapshot in timeline {
+            let Some(nodes) = snapshot.get_mut("nodes") else {
+                continue;
+            };
+            rewrite_nodes_value_asset_paths(nodes, assets_dir);
+        }
+    }
+}
+
+fn rewrite_project_asset_paths_for_import(
+    nodes_json: &str,
+    history_json: &str,
+    assets_dir: &Path,
+) -> Result<(String, String), String> {
+    let mut parsed_nodes: serde_json::Value =
+        serde_json::from_str(nodes_json).unwrap_or_else(|_| serde_json::Value::Array(Vec::new()));
+    rewrite_nodes_value_asset_paths(&mut parsed_nodes, assets_dir);
+
+    let mut parsed_history: serde_json::Value =
+        serde_json::from_str(history_json).unwrap_or_else(|_| serde_json::json!({}));
+    rewrite_history_value_asset_paths(&mut parsed_history, assets_dir);
+
+    let next_nodes_json =
+        serde_json::to_string(&parsed_nodes).map_err(|e| format!("Failed to encode nodes json: {}", e))?;
+    let next_history_json =
+        serde_json::to_string(&parsed_history).map_err(|e| format!("Failed to encode history json: {}", e))?;
+
+    Ok((next_nodes_json, next_history_json))
+}
+
 fn rewrite_project_image_paths_for_import(
     nodes_json: &str,
     history_json: &str,
@@ -639,6 +977,7 @@ pub fn export_project_package(
         .ok_or_else(|| "Project not found".to_string())?;
 
     let image_paths = extract_project_image_paths(&record.nodes_json, &record.history_json);
+    let asset_paths = extract_project_asset_paths(&record.nodes_json, &record.history_json);
     let mut image_files: Vec<(String, Vec<u8>)> = Vec::new();
     let mut seen_filenames = HashSet::new();
     let mut missing_images = Vec::new();
@@ -671,6 +1010,47 @@ pub fn export_project_package(
         }
         return Err(format!(
             "Export failed: missing {} referenced image files: {}",
+            preview.len(),
+            preview.join(", ")
+        ));
+    }
+
+    let spine_assets_dir = resolve_spine_assets_dir(&app)?;
+    let mut asset_files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut missing_assets = Vec::new();
+
+    for path in asset_paths {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let path_buf = PathBuf::from(trimmed);
+        let rel = match path_buf.strip_prefix(&spine_assets_dir) {
+            Ok(value) => value.to_path_buf(),
+            Err(_) => {
+                missing_assets.push(trimmed.to_string());
+                continue;
+            }
+        };
+
+        match std::fs::read(&path_buf) {
+            Ok(bytes) => {
+                let rel_str = rel.to_string_lossy().replace('\\', "/");
+                asset_files.push((format!("assets/spine/{}", rel_str), bytes));
+            }
+            Err(_) => missing_assets.push(trimmed.to_string()),
+        }
+    }
+
+    if !missing_assets.is_empty() {
+        let mut preview = missing_assets;
+        if preview.len() > 6 {
+            preview.truncate(6);
+            preview.push("...".to_string());
+        }
+        return Err(format!(
+            "Export failed: missing {} referenced asset files: {}",
             preview.len(),
             preview.join(", ")
         ));
@@ -714,6 +1094,13 @@ pub fn export_project_package(
             .map_err(|e| format!("Failed to write image entry: {}", e))?;
     }
 
+    for (entry_name, bytes) in asset_files {
+        zip.start_file(entry_name, options)
+            .map_err(|e| format!("Failed to write asset entry: {}", e))?;
+        zip.write_all(&bytes)
+            .map_err(|e| format!("Failed to write asset entry: {}", e))?;
+    }
+
     zip.finish()
         .map_err(|e| format!("Failed to finalize project package: {}", e))?;
 
@@ -738,6 +1125,7 @@ pub fn import_project_package(app: AppHandle, source_path: String) -> Result<Pro
     };
 
     let images_dir = resolve_images_dir(&app)?;
+    let spine_assets_dir = resolve_spine_assets_dir(&app)?;
     let mut image_names: HashSet<String> = HashSet::new();
 
     for index in 0..archive.len() {
@@ -747,6 +1135,29 @@ pub fn import_project_package(app: AppHandle, source_path: String) -> Result<Pro
         let name = entry.name().to_string();
 
         if !name.starts_with("images/") || name.ends_with('/') {
+            if !name.starts_with("assets/spine/") || name.ends_with('/') {
+                continue;
+            }
+
+            let rel = name
+                .strip_prefix("assets/spine/")
+                .ok_or_else(|| "Invalid spine asset entry".to_string())?;
+            let output_path = spine_assets_dir.join(rel);
+            if let Some(parent) = output_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("Failed to create asset directory: {}", e))?;
+            }
+
+            if output_path.exists() {
+                std::io::copy(&mut entry, &mut std::io::sink())
+                    .map_err(|e| format!("Failed to read package asset: {}", e))?;
+                continue;
+            }
+
+            let mut output =
+                File::create(&output_path).map_err(|e| format!("Failed to persist asset: {}", e))?;
+            std::io::copy(&mut entry, &mut output)
+                .map_err(|e| format!("Failed to persist asset: {}", e))?;
             continue;
         }
 
@@ -775,6 +1186,9 @@ pub fn import_project_package(app: AppHandle, source_path: String) -> Result<Pro
         &images_dir,
         &image_names,
     )?;
+
+    let (nodes_json, history_json) =
+        rewrite_project_asset_paths_for_import(&nodes_json, &history_json, &spine_assets_dir)?;
 
     let now = now_timestamp_ms();
     let project_id = Uuid::new_v4().to_string();

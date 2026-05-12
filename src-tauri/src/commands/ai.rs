@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use crate::ai::error::AIError;
 use crate::ai::providers::build_default_providers;
+use crate::ai::providers::api666::Api666Provider;
 use crate::ai::{
     GenerateRequest, ProviderRegistry, ProviderTaskHandle, ProviderTaskPollResult,
     ProviderTaskSubmission,
@@ -50,6 +51,7 @@ pub struct GenerateRequestDto {
 pub struct ReversePromptRequestDto {
     pub image: String,
     pub language: Option<String>,
+    pub format: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -285,7 +287,36 @@ pub async fn reverse_prompt(provider: String, request: ReversePromptRequestDto) 
         .ok_or_else(|| format!("Unknown provider: {}", provider))?;
 
     resolved_provider
-        .reverse_prompt(request.image, request.language)
+        .reverse_prompt(request.image, request.language, request.format)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn craft_image_prompt(
+    provider: String,
+    api_key: String,
+    user_input: String,
+    category: Option<String>,
+) -> Result<String, String> {
+    let registry = get_registry();
+    let resolved_provider = registry
+        .get_provider(provider.as_str())
+        .ok_or_else(|| format!("Unknown provider: {}", provider))?;
+
+    resolved_provider
+        .set_api_key(api_key)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let api666_provider = resolved_provider
+        .as_ref()
+        .as_any()
+        .downcast_ref::<Api666Provider>()
+        .ok_or_else(|| "Provider is not Api666Provider".to_string())?;
+
+    api666_provider
+        .craft_image_prompt(&user_input, category.as_deref())
         .await
         .map_err(|error| error.to_string())
 }
@@ -400,6 +431,14 @@ pub async fn submit_generate_image_job(
     });
 
     Ok(job_id)
+}
+
+#[tauri::command]
+pub async fn submit_generate_video_job(
+    app: AppHandle,
+    request: GenerateRequestDto,
+) -> Result<String, String> {
+    submit_generate_image_job(app, request).await
 }
 
 #[tauri::command]
@@ -531,6 +570,14 @@ pub async fn get_generate_image_job(
             error: Some(error.to_string()),
         }),
     }
+}
+
+#[tauri::command]
+pub async fn get_generate_video_job(
+    app: AppHandle,
+    job_id: String,
+) -> Result<GenerationJobStatusDto, String> {
+    get_generate_image_job(app, job_id).await
 }
 
 #[tauri::command]

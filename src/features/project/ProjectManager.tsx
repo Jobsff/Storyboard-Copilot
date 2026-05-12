@@ -8,6 +8,7 @@ import { UI_CONTENT_OVERLAY_INSET_CLASS } from '@/components/ui/motion';
 import { UiButton, UiModal, UiSelect } from '@/components/ui/primitives';
 import { MissingApiKeyHint } from '@/features/settings/MissingApiKeyHint';
 import { listModelProviders } from '@/features/canvas/models';
+import { API666_KEY_GROUPS } from '@/features/canvas/models/providers/api666';
 import { resolveErrorContent, showErrorDialog } from '@/features/canvas/application/errorDialog';
 import { RenameDialog } from './RenameDialog';
 
@@ -26,7 +27,10 @@ export function ProjectManager() {
   );
   const [sortField, setSortField] = useState<ProjectSortField>('createdAt');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
-  const providerIds = useMemo(() => listModelProviders().map((provider) => provider.id), []);
+  const providerIds = useMemo(() => {
+    const baseIds = listModelProviders().map((provider) => provider.id);
+    return baseIds.flatMap((id) => id === '666api' ? API666_KEY_GROUPS.map((g) => g.id) : [id]);
+  }, []);
   const configuredApiKeyCount = useSettingsStore((state) =>
     getConfiguredApiKeyCount(state.apiKeys, providerIds)
   );

@@ -38,6 +38,7 @@ pub enum ProviderTaskPollResult {
 
 #[async_trait::async_trait]
 pub trait AIProvider: Send + Sync {
+    fn as_any(&self) -> &dyn std::any::Any;
     fn name(&self) -> &str;
     fn supports_model(&self, model: &str) -> bool;
 
@@ -70,7 +71,12 @@ pub trait AIProvider: Send + Sync {
         )))
     }
 
-    async fn reverse_prompt(&self, _image: String, _language: Option<String>) -> Result<String, AIError> {
+    async fn reverse_prompt(
+        &self,
+        _image: String,
+        _language: Option<String>,
+        _format: Option<String>,
+    ) -> Result<String, AIError> {
         Err(AIError::Provider(format!(
             "Provider '{}' does not support reverse prompt",
             self.name()

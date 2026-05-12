@@ -13,6 +13,7 @@ export interface ReversePromptRequest {
   provider: string;
   image: string;
   language?: string;
+  format?: 'text' | 'json';
 }
 
 export type GenerationJobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'not_found';
@@ -73,6 +74,7 @@ function sanitizeReversePromptRequestForLog(request: ReversePromptRequest): Reco
   return {
     provider: request.provider,
     language: request.language ?? '',
+    format: request.format ?? '',
     image_preview: truncateBase64Like(request.image),
   };
 }
@@ -217,6 +219,35 @@ export async function getGenerateImageJob(jobId: string): Promise<GenerationJobS
   return result;
 }
 
+export async function submitGenerateVideoJob(request: GenerateRequest): Promise<string> {
+  console.info('[AI] submit_generate_video_job request', {
+    ...sanitizeGenerateRequestForLog(request),
+    tauri: isTauri(),
+  });
+
+  if (!isTauri()) {
+    throw new Error('当前不是 Tauri 容器环境，请使用 `npm run tauri dev` 启动');
+  }
+
+  const jobId = await invoke<string>('submit_generate_video_job', { request });
+  if (typeof jobId !== 'string' || !jobId.trim()) {
+    throw new Error('submit_generate_video_job returned invalid job id');
+  }
+  return jobId.trim();
+}
+
+export async function getGenerateVideoJob(jobId: string): Promise<GenerationJobStatus> {
+  if (!isTauri()) {
+    throw new Error('当前不是 Tauri 容器环境，请使用 `npm run tauri dev` 启动');
+  }
+
+  const result = await invoke<GenerationJobStatus>('get_generate_video_job', { jobId });
+  if (!result || typeof result !== 'object' || typeof result.status !== 'string') {
+    throw new Error('get_generate_video_job returned invalid payload');
+  }
+  return result;
+}
+
 export async function listModels(): Promise<string[]> {
   return await invoke('list_models');
 }
@@ -238,6 +269,7 @@ export async function reversePrompt(request: ReversePromptRequest): Promise<stri
       request: {
         image: request.image,
         language: request.language,
+        format: request.format,
       },
     });
     if (typeof rawResult !== 'string') {
@@ -268,6 +300,56 @@ export async function reversePrompt(request: ReversePromptRequest): Promise<stri
     console.error('[AI] reverse_prompt failed', {
       elapsedMs,
       request: sanitizeReversePromptRequestForLog(request),
+      error,
+      normalizedError,
+    });
+    const commandError: ErrorWithDetails = new Error(normalizedError.message);
+    commandError.details = normalizedError.details;
+    throw commandError;
+  }
+}
+
+export interface CraftImagePromptRequest {
+  provider: string;
+  apiKey: string;
+  userInput: string;
+  category?: string;
+}
+
+export async function craftImagePrompt(request: CraftImagePromptRequest): Promise<string> {
+  const startedAt = performance.now();
+  console.info('[AI] craft_image_prompt request', {
+    provider: request.provider,
+    category: request.category ?? 'general',
+    userInputLength: request.userInput.length,
+    tauri: isTauri(),
+  });
+
+  if (!isTauri()) {
+    throw new Error('当前不是 Tauri 容器环境，请使用 `npm run tauri dev` 启动');
+  }
+
+  try {
+    const rawResult = await invoke<string>('craft_image_prompt', {
+      provider: request.provider,
+      apiKey: request.apiKey,
+      userInput: request.userInput,
+      category: request.category ?? null,
+    });
+    const result = rawResult.trim();
+    if (!result) {
+      throw createErrorWithDetails('craft_image_prompt returned empty content');
+    }
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    console.info('[AI] craft_image_prompt success', { elapsedMs, length: result.length });
+    return result;
+  } catch (error) {
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    const normalizedError = normalizeInvokeError(error);
+    console.error('[AI] craft_image_prompt failed', {
+      elapsedMs,
+      provider: request.provider,
+      category: request.category,
       error,
       normalizedError,
     });

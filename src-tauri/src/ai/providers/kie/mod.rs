@@ -434,6 +434,8 @@ impl Default for KieProvider {
 
 #[async_trait::async_trait]
 impl AIProvider for KieProvider {
+    fn as_any(&self) -> &dyn std::any::Any { self }
+
     fn name(&self) -> &str {
         "kie"
     }

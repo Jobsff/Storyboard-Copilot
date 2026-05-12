@@ -1,6 +1,18 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NodeToolbar as ReactFlowNodeToolbar } from '@xyflow/react';
-import { Copy, Crop, Download, FolderOpen, PenLine, RefreshCw, Scissors, Trash2, Unlink2, ZoomIn } from 'lucide-react';
+import {
+  Copy,
+  Crop,
+  Download,
+  FolderOpen,
+  Info,
+  PenLine,
+  RefreshCw,
+  Scissors,
+  Trash2,
+  Unlink2,
+  ZoomIn,
+} from 'lucide-react';
 import { save } from '@tauri-apps/plugin-dialog';
 import { useTranslation } from 'react-i18next';
 
@@ -18,7 +30,7 @@ import {
 import { canvasEventBus } from '@/features/canvas/application/canvasServices';
 import { getNodeToolPlugins } from '@/features/canvas/tools';
 import type { ToolIconKey } from '@/features/canvas/tools';
-import { UiChipButton, UiPanel } from '@/components/ui';
+import { UiButton, UiChipButton, UiModal, UiPanel } from '@/components/ui';
 import {
   copyImageSourceToClipboard,
   saveImageSourceToDirectory,
@@ -67,13 +79,19 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
   );
   const [downloadMenu, setDownloadMenu] = useState<{ x: number; y: number } | null>(null);
   const [isDownloadMenuVisible, setIsDownloadMenuVisible] = useState(false);
+  const [isInfoOpen, setIsInfoOpen] = useState(false);
+  const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(
+    null
+  );
   const [isCopySuccess, setIsCopySuccess] = useState(false);
   const [isCopyTextSuccess, setIsCopyTextSuccess] = useState(false);
   const [isCopyErrorSuccess, setIsCopyErrorSuccess] = useState(false);
+  const [isCopyPromptSuccess, setIsCopyPromptSuccess] = useState(false);
   const downloadMenuRef = useRef<HTMLDivElement | null>(null);
   const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyTextFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyErrorFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyPromptFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const downloadMenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const imageSource = useMemo(() => {
     if (isUploadNode(node) || isImageEditNode(node) || isExportImageNode(node)) {
@@ -82,6 +100,55 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     return null;
   }, [node]);
   const canHandleImage = Boolean(imageSource);
+  const infoPayload = useMemo(() => {
+    const data = node.data as Record<string, unknown>;
+    const context = data.generationDebugContext as
+      | {
+          providerId?: string;
+          requestModel?: string;
+          requestSize?: string;
+          requestAspectRatio?: string;
+          prompt?: string;
+        }
+      | undefined;
+
+    const providerId = typeof context?.providerId === 'string'
+      ? context.providerId
+      : typeof data.generationProviderId === 'string'
+        ? (data.generationProviderId as string)
+        : '';
+    const model = typeof context?.requestModel === 'string'
+      ? context.requestModel
+      : typeof data.model === 'string'
+        ? (data.model as string)
+        : '';
+    const size = typeof context?.requestSize === 'string'
+      ? context.requestSize
+      : typeof data.size === 'string'
+        ? (data.size as string)
+        : '';
+    const aspectRatio = typeof context?.requestAspectRatio === 'string'
+      ? context.requestAspectRatio
+      : typeof data.requestAspectRatio === 'string'
+        ? (data.requestAspectRatio as string)
+        : typeof data.aspectRatio === 'string'
+          ? (data.aspectRatio as string)
+          : '';
+    const prompt = typeof context?.prompt === 'string'
+      ? context.prompt
+      : typeof data.prompt === 'string'
+        ? (data.prompt as string)
+        : '';
+
+    return {
+      providerId: providerId.trim(),
+      model: model.trim(),
+      size: size.trim(),
+      aspectRatio: aspectRatio.trim(),
+      prompt: prompt.trim(),
+    };
+  }, [node.data]);
+  const canShowInfo = canHandleImage;
   const generationError =
     isExportImageNode(node)
     && typeof (node.data as { generationError?: unknown }).generationError === 'string'
@@ -176,6 +243,9 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
       if (copyErrorFeedbackTimerRef.current) {
         clearTimeout(copyErrorFeedbackTimerRef.current);
       }
+      if (copyPromptFeedbackTimerRef.current) {
+        clearTimeout(copyPromptFeedbackTimerRef.current);
+      }
       if (downloadMenuCloseTimerRef.current) {
         clearTimeout(downloadMenuCloseTimerRef.current);
       }
@@ -269,6 +339,28 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     }
   }, [canCopyGenerationError, generationErrorReport]);
 
+  const canCopyPrompt = Boolean(infoPayload.prompt);
+  const handleCopyPrompt = useCallback(async () => {
+    if (!infoPayload.prompt) {
+      return;
+    }
+
+    setIsCopyPromptSuccess(true);
+    if (copyPromptFeedbackTimerRef.current) {
+      clearTimeout(copyPromptFeedbackTimerRef.current);
+    }
+    copyPromptFeedbackTimerRef.current = setTimeout(() => {
+      setIsCopyPromptSuccess(false);
+      copyPromptFeedbackTimerRef.current = null;
+    }, 1100);
+
+    try {
+      await navigator.clipboard.writeText(infoPayload.prompt);
+    } catch (error) {
+      console.error('Failed to copy prompt', error);
+    }
+  }, [infoPayload.prompt]);
+
   const handleDownloadSaveAs = useCallback(async () => {
     if (!imageSource) {
       return;
@@ -287,6 +379,58 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
       console.error('Failed to save image with save-as', error);
     }
   }, [closeDownloadMenu, imageSource, node.id]);
+
+  useEffect(() => {
+    if (!isInfoOpen || !imageSource) {
+      setImageDimensions(null);
+      return;
+    }
+
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled) {
+        return;
+      }
+      const width = img.naturalWidth ?? 0;
+      const height = img.naturalHeight ?? 0;
+      if (width > 0 && height > 0) {
+        setImageDimensions({ width, height });
+      } else {
+        setImageDimensions(null);
+      }
+    };
+    img.onerror = () => {
+      if (!cancelled) {
+        setImageDimensions(null);
+      }
+    };
+    img.src = imageSource;
+    return () => {
+      cancelled = true;
+    };
+  }, [imageSource, isInfoOpen]);
+
+  const requestResolutionText = useMemo(() => {
+    const sizeToPixels: Record<string, number> = {
+      '0.5K': 512,
+      '1K': 1024,
+      '2K': 2048,
+      '4K': 4096,
+    };
+    const pixels = sizeToPixels[infoPayload.size] ?? null;
+    if (!pixels || !infoPayload.aspectRatio) {
+      return infoPayload.size;
+    }
+    const [wText, hText] = infoPayload.aspectRatio.split(':');
+    const w = Number.parseFloat(wText);
+    const h = Number.parseFloat(hText);
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
+      return infoPayload.size;
+    }
+    const height = Math.max(1, Math.round(pixels * (h / w)));
+    return `${infoPayload.size} (${pixels}x${height})`;
+  }, [infoPayload.aspectRatio, infoPayload.size]);
 
   const handleDownloadToPreset = useCallback(
     async (targetDir: string) => {
@@ -415,6 +559,20 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
             {t('nodeToolbar.download')}
           </UiChipButton>
         )}
+        {!isImageEdit && canShowInfo && (
+          <UiChipButton
+            key="image-info"
+            className={`h-8 ${TOOLBAR_BUTTON_RADIUS_CLASS} px-2.5 text-xs ${TOOLBAR_NEUTRAL_BUTTON_CLASS}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              closeDownloadMenu();
+              setIsInfoOpen(true);
+            }}
+          >
+            <Info className="h-3.5 w-3.5" />
+            {t('nodeToolbar.info')}
+          </UiChipButton>
+        )}
         {!isImageEdit && isGroupNode(node) && (
           <UiChipButton
             key="group-ungroup"
@@ -442,6 +600,65 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
           {t('common.delete')}
         </UiChipButton>
       </UiPanel>
+
+      <UiModal
+        isOpen={isInfoOpen}
+        title={t('nodeToolbar.infoTitle')}
+        onClose={() => setIsInfoOpen(false)}
+        widthClassName="max-w-3xl"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <UiButton
+              type="button"
+              variant="primary"
+              disabled={!canCopyPrompt}
+              onClick={() => {
+                void handleCopyPrompt();
+              }}
+            >
+              {isCopyPromptSuccess ? t('nodeToolbar.copied') : t('nodeToolbar.copyPrompt')}
+            </UiButton>
+            <UiButton type="button" variant="muted" onClick={() => setIsInfoOpen(false)}>
+              {t('common.close')}
+            </UiButton>
+          </div>
+        }
+      >
+        <div className="space-y-3 text-sm text-text-dark">
+          {infoPayload.providerId ? (
+            <div className="flex items-start justify-between gap-4">
+              <div className="text-text-muted">{t('nodeToolbar.infoProvider')}</div>
+              <div className="text-right break-all">{infoPayload.providerId}</div>
+            </div>
+          ) : null}
+          <div className="flex items-start justify-between gap-4">
+            <div className="text-text-muted">{t('nodeToolbar.infoModel')}</div>
+            <div className="text-right break-all">{infoPayload.model || '-'}</div>
+          </div>
+          <div className="flex items-start justify-between gap-4">
+            <div className="text-text-muted">{t('nodeToolbar.infoAspectRatio')}</div>
+            <div className="text-right break-all">{infoPayload.aspectRatio || '-'}</div>
+          </div>
+          <div className="flex items-start justify-between gap-4">
+            <div className="text-text-muted">{t('nodeToolbar.infoResolution')}</div>
+            <div className="text-right break-all">
+              {imageDimensions ? `${imageDimensions.width}x${imageDimensions.height}` : '-'}
+            </div>
+          </div>
+          <div className="flex items-start justify-between gap-4">
+            <div className="text-text-muted">{t('nodeToolbar.infoRequestSize')}</div>
+            <div className="text-right break-all">{requestResolutionText || '-'}</div>
+          </div>
+          <div className="space-y-2">
+            <div className="text-text-muted">{t('nodeToolbar.infoPrompt')}</div>
+            <UiPanel className="rounded-lg bg-bg-dark/50 px-3 py-2">
+              <pre className="whitespace-pre-wrap break-words text-xs leading-5 text-text-dark">
+                {infoPayload.prompt || '-'}
+              </pre>
+            </UiPanel>
+          </div>
+        </div>
+      </UiModal>
 
       {!isImageEdit && downloadMenu && (
         <div

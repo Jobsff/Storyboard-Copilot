@@ -1,13 +1,20 @@
 import {
   generateImage,
   getGenerateImageJob,
+  getGenerateVideoJob,
   reversePrompt,
   setApiKey,
   submitGenerateImageJob,
+  submitGenerateVideoJob,
 } from '@/commands/ai';
 import { imageUrlToDataUrl, persistImageLocally } from '@/features/canvas/application/imageData';
 
-import type { AiGateway, GenerateImagePayload, ReversePromptPayload } from '../application/ports';
+import type {
+  AiGateway,
+  GenerateImagePayload,
+  GenerateVideoPayload,
+  ReversePromptPayload,
+} from '../application/ports';
 
 async function normalizeReferenceImages(payload: GenerateImagePayload): Promise<string[] | undefined> {
   const isKieModel = payload.model.startsWith('kie/');
@@ -20,6 +27,12 @@ async function normalizeReferenceImages(payload: GenerateImagePayload): Promise<
           : await persistImageLocally(imageUrl)
       )
     )
+    : undefined;
+}
+
+async function normalizeVideoReferenceImages(payload: GenerateVideoPayload): Promise<string[] | undefined> {
+  return payload.referenceImages
+    ? await Promise.all(payload.referenceImages.map(async (imageUrl) => await imageUrlToDataUrl(imageUrl)))
     : undefined;
 }
 
@@ -49,12 +62,29 @@ export const tauriAiGateway: AiGateway = {
     });
   },
   getGenerateImageJob,
+  submitGenerateVideoJob: async (payload: GenerateVideoPayload) => {
+    const normalizedReferenceImages = await normalizeVideoReferenceImages(payload);
+    return await submitGenerateVideoJob({
+      prompt: payload.prompt,
+      model: payload.model,
+      size: payload.quality,
+      aspect_ratio: payload.aspectRatio,
+      reference_images: normalizedReferenceImages,
+      extra_params: {
+        ...(payload.extraParams ?? {}),
+        durationSeconds: payload.durationSeconds,
+        quality: payload.quality,
+      },
+    });
+  },
+  getGenerateVideoJob,
   reversePrompt: async (provider: string, payload: ReversePromptPayload) => {
     const normalizedImage = await persistImageLocally(payload.image);
     return await reversePrompt({
       provider,
       image: normalizedImage,
       language: payload.language,
+      format: payload.format,
     });
   },
 };
