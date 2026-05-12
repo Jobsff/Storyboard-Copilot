@@ -111,7 +111,7 @@ export function PromptEngineerDialog({
           </UiButton>
         </>
       }
-      widthClassName="max-w-4xl"
+      widthClassName="w-[800px] max-w-[calc(100vw-48px)]"
     >
       <div className="space-y-4">
         <div className="space-y-2">
@@ -121,7 +121,7 @@ export function PromptEngineerDialog({
               aria-label={t('promptCraft.dialog.category')}
               value={category}
               onChange={(event) => setCategory(event.target.value as PromptCraftCategoryId)}
-              className="h-8 w-[140px] rounded-lg text-sm"
+              className="h-8 min-w-[200px] rounded-lg text-sm"
             >
               {categoryOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -139,7 +139,7 @@ export function PromptEngineerDialog({
             value={userInput}
             onChange={(event) => setUserInput(event.target.value)}
             placeholder={t('promptCraft.dialog.userInputPlaceholder')}
-            className="min-h-[72px]"
+            className="min-h-[100px]"
           />
         </div>
 
@@ -185,7 +185,7 @@ export function PromptEngineerDialog({
             <UiTextAreaField
               value={generatedPrompt}
               onChange={(event) => setGeneratedPrompt(event.target.value)}
-              className="min-h-[120px] font-mono text-xs"
+              className="min-h-[200px] font-mono text-xs"
             />
           ) : (
             <UiPanel className="rounded-lg bg-bg-dark/50 px-3 py-2">
