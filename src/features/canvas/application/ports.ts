@@ -54,6 +54,7 @@ export interface ReversePromptPayload {
   image: string;
   language?: string;
   format?: 'text' | 'json';
+  model?: string;
 }
 
 export interface AiGateway {

@@ -395,6 +395,10 @@
     "juyouapiKeyGroupDesc": "巨游API 接口与666API相同。请先填写域名地址，再配置密钥。",
     "juyouapiBaseUrl": "域名 / 接口地址",
     "juyouapiBaseUrlPlaceholder": "例如 https://api.juyou.ai",
+    "ollamaBaseUrl": "API 地址",
+    "ollamaBaseUrlPlaceholder": "例如 http://localhost:11434/v1",
+    "ollamaModel": "模型名称",
+    "ollamaModelPlaceholder": "例如 gemma4:e4b",
     "missingAnyApiKeyMessage": "您尚未配置任何密钥，请打开设置进行配置。",
     "openProvidersSettings": "打开设置",
     "aboutAppName": "巨游美术工坊",
@@ -568,7 +572,8 @@
       "regenerate": "重新生成",
       "preview": "提示词预览",
       "generate": "生成图片",
-      "emptyHint": "输入需求后点击「生成提示词」"
+      "emptyHint": "输入需求后点击「生成提示词」",
+      "chineseOutput": "中文输出"
     },
     "category": {
       "general": "通用",

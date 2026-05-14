@@ -14,6 +14,7 @@ use uuid::Uuid;
 use crate::ai::error::AIError;
 use crate::ai::providers::build_default_providers;
 use crate::ai::providers::api666::Api666Provider;
+use crate::ai::providers::ollama::OllamaProvider;
 use crate::ai::{
     GenerateRequest, ProviderRegistry, ProviderTaskHandle, ProviderTaskPollResult,
     ProviderTaskSubmission,
@@ -52,6 +53,7 @@ pub struct ReversePromptRequestDto {
     pub image: String,
     pub language: Option<String>,
     pub format: Option<String>,
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -287,7 +289,7 @@ pub async fn reverse_prompt(provider: String, request: ReversePromptRequestDto) 
         .ok_or_else(|| format!("Unknown provider: {}", provider))?;
 
     resolved_provider
-        .reverse_prompt(request.image, request.language, request.format)
+        .reverse_prompt(request.image, request.language, request.format, request.model)
         .await
         .map_err(|error| error.to_string())
 }
@@ -298,25 +300,23 @@ pub async fn craft_image_prompt(
     api_key: String,
     user_input: String,
     category: Option<String>,
+    model: Option<String>,
+    language: Option<String>,
 ) -> Result<String, String> {
     let registry = get_registry();
     let resolved_provider = registry
         .get_provider(provider.as_str())
         .ok_or_else(|| format!("Unknown provider: {}", provider))?;
 
+    if !api_key.is_empty() {
+        resolved_provider
+            .set_api_key(api_key)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+
     resolved_provider
-        .set_api_key(api_key)
-        .await
-        .map_err(|error| error.to_string())?;
-
-    let api666_provider = resolved_provider
-        .as_ref()
-        .as_any()
-        .downcast_ref::<Api666Provider>()
-        .ok_or_else(|| "Provider is not Api666Provider".to_string())?;
-
-    api666_provider
-        .craft_image_prompt(&user_input, category.as_deref())
+        .craft_image_prompt(&user_input, category.as_deref(), model.as_deref(), language.as_deref())
         .await
         .map_err(|error| error.to_string())
 }
@@ -337,6 +337,42 @@ pub async fn set_juyouapi_base_url(base_url: String) -> Result<(), String> {
     juyou_provider
         .set_base_url(base_url)
         .await;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_ollama_base_url(base_url: String) -> Result<(), String> {
+    let registry = get_registry();
+    let resolved_provider = registry
+        .get_provider("ollama")
+        .ok_or_else(|| "Unknown provider: ollama".to_string())?;
+
+    let ollama_provider = resolved_provider
+        .as_ref()
+        .as_any()
+        .downcast_ref::<OllamaProvider>()
+        .ok_or_else(|| "Provider is not OllamaProvider".to_string())?;
+
+    ollama_provider.set_base_url(base_url).await;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_ollama_model(model: String) -> Result<(), String> {
+    let registry = get_registry();
+    let resolved_provider = registry
+        .get_provider("ollama")
+        .ok_or_else(|| "Unknown provider: ollama".to_string())?;
+
+    let ollama_provider = resolved_provider
+        .as_ref()
+        .as_any()
+        .downcast_ref::<OllamaProvider>()
+        .ok_or_else(|| "Provider is not OllamaProvider".to_string())?;
+
+    ollama_provider.set_model_name(model).await;
 
     Ok(())
 }

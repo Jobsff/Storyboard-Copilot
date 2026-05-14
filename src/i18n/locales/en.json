@@ -395,6 +395,10 @@
     "juyouapiKeyGroupDesc": "巨游API is a backup provider with the same API as 666API. Set the base URL first, then configure key groups.",
     "juyouapiBaseUrl": "Base URL / Domain",
     "juyouapiBaseUrlPlaceholder": "e.g. https://api.juyou.ai",
+    "ollamaBaseUrl": "API Base URL",
+    "ollamaBaseUrlPlaceholder": "e.g. http://localhost:11434/v1",
+    "ollamaModel": "Model Name",
+    "ollamaModelPlaceholder": "e.g. gemma4:e4b",
     "missingAnyApiKeyMessage": "You have not configured any API keys yet. Please open Settings to configure one.",
     "openProvidersSettings": "Open Settings",
     "aboutAppName": "Juyou Art Workshop",
@@ -568,7 +572,8 @@
       "regenerate": "Regenerate",
       "preview": "Prompt preview",
       "generate": "Generate Image",
-      "emptyHint": "Enter your requirement and click \"Craft Prompt\""
+      "emptyHint": "Enter your requirement and click \"Craft Prompt\"",
+      "chineseOutput": "Output in Chinese"
     },
     "category": {
       "general": "General",

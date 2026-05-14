@@ -255,6 +255,8 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
   const findNodePosition = useCanvasStore((state) => state.findNodePosition);
   const addEdge = useCanvasStore((state) => state.addEdge);
   const apiKeys = useSettingsStore((state) => state.apiKeys);
+  const aiAssistantProvider = useSettingsStore((state) => state.aiAssistantProvider);
+  const aiAssistantModel = useSettingsStore((state) => state.aiAssistantModel);
   const grsaiNanoBananaProModel = useSettingsStore((state) => state.grsaiNanoBananaProModel);
   const showNodePrice = useSettingsStore((state) => state.showNodePrice);
   const priceDisplayCurrencyMode = useSettingsStore((state) => state.priceDisplayCurrencyMode);
@@ -470,9 +472,20 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
 
     const resolvedAutoPromptFormat = data.autoPromptFormat ?? 'text';
     const resolvedAutoPromptLanguage = resolvedAutoPromptFormat === 'json' ? 'en' : 'zh';
-    const reversePromptKeyId = resolve666ReversePromptKeyId(resolvedAutoPromptFormat, resolvedAutoPromptLanguage);
-    const apiKey = apiKeys[reversePromptKeyId] || apiKeys['666api_default'] || '';
-    if (!apiKey) {
+
+    // Resolve API key based on the configured AI assistant provider
+    let reversePromptProvider = aiAssistantProvider || '666api';
+    let apiKey = '';
+    if (reversePromptProvider === '666api') {
+      const reversePromptKeyId = resolve666ReversePromptKeyId(resolvedAutoPromptFormat, resolvedAutoPromptLanguage);
+      apiKey = apiKeys[reversePromptKeyId] || apiKeys['666api_default'] || '';
+    } else if (reversePromptProvider === 'juyouapi') {
+      apiKey = apiKeys['juyouapi'] ?? '';
+    } else {
+      apiKey = apiKeys[reversePromptProvider] ?? '';
+    }
+
+    if (!apiKey && reversePromptProvider !== 'ollama') {
       autoPromptRequestStartedRef.current = true;
       const errorMessage = t('ai.autoPrompt.apiKeyRequired');
       setError(errorMessage);
@@ -483,15 +496,17 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
 
     autoPromptRequestStartedRef.current = true;
     updateNodeData(id, { autoPromptRunning: true });
+    const capturedProvider = reversePromptProvider;
     void (async () => {
       const runtimeDiagnostics = await getRuntimeDiagnostics();
       setError(null);
       try {
-        await canvasAiGateway.setApiKey('666api', apiKey);
-        const prompt = await canvasAiGateway.reversePrompt('666api', {
+        await canvasAiGateway.setApiKey(capturedProvider, apiKey);
+        const prompt = await canvasAiGateway.reversePrompt(capturedProvider, {
           image: incomingImages[0],
           language: resolvedAutoPromptLanguage,
           format: resolvedAutoPromptFormat,
+          model: aiAssistantModel || undefined,
         });
         setPromptDraft(prompt);
         commitPromptDraft(prompt);
@@ -500,8 +515,8 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         const resolvedError = resolveErrorContent(autoPromptError, t('ai.autoPrompt.error'));
         const generationDebugContext: GenerationDebugContext = {
           sourceType: 'unknown',
-          providerId: '666api',
-          requestModel: 'doubao-seed-2-0-mini-260215',
+          providerId: capturedProvider,
+          requestModel: capturedProvider,
           prompt: '',
           extraParams: {},
           referenceImageCount: incomingImages.length,
@@ -528,6 +543,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
       }
     })();
   }, [
+    aiAssistantProvider,
     apiKeys,
     commitPromptDraft,
     data.autoPrompt,

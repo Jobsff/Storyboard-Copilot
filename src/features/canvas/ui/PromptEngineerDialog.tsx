@@ -2,12 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2 } from 'lucide-react';
 import { craftImagePrompt } from '@/commands/ai';
-import { UiButton, UiModal, UiPanel, UiSelect, UiTextAreaField } from '@/components/ui/primitives';
+import { UiButton, UiCheckbox, UiModal, UiPanel, UiSelect, UiTextAreaField } from '@/components/ui/primitives';
 import { PROMPT_CRAFT_CATEGORIES, type PromptCraftCategoryId } from '@/features/canvas/application/promptCraft';
+import { useSettingsStore } from '@/stores/settingsStore';
 
 interface PromptEngineerDialogProps {
   isOpen: boolean;
-  apiKey: string;
   onClose: () => void;
   onConfirm: (prompt: string) => void;
 }
@@ -16,16 +16,18 @@ const DEFAULT_CATEGORY_ID: PromptCraftCategoryId = 'general';
 
 export function PromptEngineerDialog({
   isOpen,
-  apiKey,
   onClose,
   onConfirm,
 }: PromptEngineerDialogProps) {
   const { t } = useTranslation();
+  const aiAssistantProvider = useSettingsStore((state) => state.aiAssistantProvider);
+  const apiKeys = useSettingsStore((state) => state.apiKeys);
   const [category, setCategory] = useState<PromptCraftCategoryId>(DEFAULT_CATEGORY_ID);
   const [userInput, setUserInput] = useState('');
   const [generatedPrompt, setGeneratedPrompt] = useState('');
   const [isCrafting, setIsCrafting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [useChinese, setUseChinese] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
@@ -37,6 +39,7 @@ export function PromptEngineerDialog({
     setError(null);
     setIsCrafting(false);
     setCategory(DEFAULT_CATEGORY_ID);
+    setUseChinese(false);
   }, [isOpen]);
 
   useEffect(() => {
@@ -49,7 +52,12 @@ export function PromptEngineerDialog({
     return () => clearTimeout(timer);
   }, [isOpen]);
 
-  const canCraft = userInput.trim().length > 0 && !isCrafting && apiKey.length > 0;
+  const provider = aiAssistantProvider || '666api';
+  const model = useSettingsStore((state) => state.aiAssistantModel);
+  const apiKey = provider === '666api'
+    ? (apiKeys['666api_default'] ?? '')
+    : (apiKeys[provider] ?? '');
+  const canCraft = userInput.trim().length > 0 && !isCrafting && (apiKey.length > 0 || provider === 'ollama');
   const canGenerate = generatedPrompt.trim().length > 0;
 
   const handleCraft = async () => {
@@ -62,10 +70,12 @@ export function PromptEngineerDialog({
     setGeneratedPrompt('');
     try {
       const result = await craftImagePrompt({
-        provider: '666api',
+        provider,
         apiKey,
         userInput: trimmed,
         category: category === 'general' ? undefined : category,
+        model: model || undefined,
+        language: useChinese ? 'zh' : undefined,
       });
       setGeneratedPrompt(result);
     } catch (err) {
@@ -131,6 +141,14 @@ export function PromptEngineerDialog({
             </UiSelect>
           </div>
         </div>
+
+        <label className="flex items-center gap-2 select-none cursor-pointer">
+          <UiCheckbox
+            checked={useChinese}
+            onCheckedChange={setUseChinese}
+          />
+          <span className="text-sm text-text-dark">{t('promptCraft.dialog.chineseOutput')}</span>
+        </label>
 
         <div className="space-y-2">
           <div className="text-sm text-text-dark">{t('promptCraft.dialog.userInput')}</div>

@@ -76,9 +76,23 @@ pub trait AIProvider: Send + Sync {
         _image: String,
         _language: Option<String>,
         _format: Option<String>,
+        _model: Option<String>,
     ) -> Result<String, AIError> {
         Err(AIError::Provider(format!(
             "Provider '{}' does not support reverse prompt",
+            self.name()
+        )))
+    }
+
+    async fn craft_image_prompt(
+        &self,
+        _user_input: &str,
+        _category: Option<&str>,
+        _model: Option<&str>,
+        _language: Option<&str>,
+    ) -> Result<String, AIError> {
+        Err(AIError::Provider(format!(
+            "Provider '{}' does not support craft image prompt",
             self.name()
         )))
     }

@@ -3,7 +3,8 @@
 ## 目标
 
 - 在画布中从”可输出图片”的节点拉线创建新节点时，新增一个菜单项：自动反推提示词。
-- 自动调用 666api 的 `doubao-seed-2-0-mini-260215` 进行识图，把生成的提示词写入 AI 图片节点的提示词输入框（不自动触发生成）。
+- 自动调用 AI 助手服务商配置的模型进行识图，把生成的提示词写入 AI 图片节点的提示词输入框（不自动触发生成）。
+- 服务商和模型通过 `aiAssistantProvider` + `aiAssistantModel` 设置项配置，支持 666API、巨游API、Ollama；不指定模型时默认使用 `doubao-seed-2-0-mini-260215`。
 - 支持两种输出模式：中文纯文本（`language=zh`）和 JSON 结构化（`language=json`）。
 
 ## 不在本方案内
@@ -60,13 +61,14 @@
 
 - `reverse_prompt`
   - 输入：
-    - `model`: 固定 `doubao-seed-2-0-mini-260215`（666API default 分组 key）
+    - `provider`: 由 `aiAssistantProvider` 设置项决定（666api / juyouapi / ollama）
+    - `model`: 由 `aiAssistantModel` 设置项决定，默认 `doubao-seed-2-0-mini-260215`
     - `image`: 参考图（data url 或本地 file path）
     - `language`: `zh`（中文纯文本）或 `json`（JSON 结构化，含 color_palette、key_elements、use_case 等字段）
   - 输出：
     - `prompt`: string
 
-- 端点：`POST https://www.666api.ai/v1/chat/completions`
+- 路由：根据 `aiAssistantProvider` 选择对应供应商的实现（均通过 OpenAI 兼容的 `/v1/chat/completions` 端点调用）
 - 结构：OpenAI 兼容的 `messages`，其中 user content 包含 text + image（多模态格式）
 - 约束输出：只返回可直接用于生图的提示词（不输出解释、步骤、免责声明）
 

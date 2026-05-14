@@ -17,6 +17,10 @@ interface SettingsState {
   isHydrated: boolean;
   apiKeys: ProviderApiKeys;
   juyouapiBaseUrl: string;
+  ollamaBaseUrl: string;
+  ollamaModel: string;
+  aiAssistantProvider: string;
+  aiAssistantModel: string;
   grsaiNanoBananaProModel: string;
   hideProviderGuidePopover: boolean;
   downloadPresetPaths: string[];
@@ -41,6 +45,10 @@ interface SettingsState {
   setHydrated: (hydrated: boolean) => void;
   setProviderApiKey: (providerId: string, key: string) => void;
   setJuyouapiBaseUrl: (url: string) => void;
+  setOllamaBaseUrl: (url: string) => void;
+  setOllamaModel: (model: string) => void;
+  setAiAssistantProvider: (provider: string) => void;
+  setAiAssistantModel: (model: string) => void;
   setGrsaiNanoBananaProModel: (model: string) => void;
   setHideProviderGuidePopover: (hide: boolean) => void;
   setDownloadPresetPaths: (paths: string[]) => void;
@@ -167,6 +175,10 @@ export const useSettingsStore = create<SettingsState>()(
       isHydrated: false,
       apiKeys: {},
       juyouapiBaseUrl: '',
+      ollamaBaseUrl: 'http://localhost:11434',
+      ollamaModel: '',
+      aiAssistantProvider: '666api',
+      aiAssistantModel: '',
       grsaiNanoBananaProModel: DEFAULT_GRSAI_NANO_BANANA_PRO_MODEL,
       hideProviderGuidePopover: false,
       downloadPresetPaths: [],
@@ -197,6 +209,10 @@ export const useSettingsStore = create<SettingsState>()(
           },
         })),
       setJuyouapiBaseUrl: (url) => set({ juyouapiBaseUrl: url.trim() }),
+      setOllamaBaseUrl: (url) => set({ ollamaBaseUrl: url.trim() }),
+      setOllamaModel: (model) => set({ ollamaModel: model.trim() }),
+      setAiAssistantProvider: (provider) => set({ aiAssistantProvider: provider }),
+      setAiAssistantModel: (model) => set({ aiAssistantModel: model.trim() }),
       setGrsaiNanoBananaProModel: (model) =>
         set({
           grsaiNanoBananaProModel: normalizeGrsaiNanoBananaProModel(model),
@@ -242,7 +258,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'settings-storage',
-      version: 13,
+      version: 14,
       onRehydrateStorage: () => {
         return (state, error) => {
           if (error) {
@@ -254,6 +270,19 @@ export const useSettingsStore = create<SettingsState>()(
           if (baseUrl) {
             import('@/commands/ai').then(({ setJuyouapiBaseUrl }) => {
               setJuyouapiBaseUrl(baseUrl).catch(() => {});
+            });
+          }
+          // Sync Ollama config to Rust backend on hydration
+          const ollamaBaseUrl = state?.ollamaBaseUrl?.trim();
+          const ollamaModel = state?.ollamaModel?.trim();
+          if (ollamaBaseUrl || ollamaModel) {
+            import('@/commands/ai').then(({ setOllamaBaseUrl, setOllamaModel }) => {
+              if (ollamaBaseUrl) {
+                setOllamaBaseUrl(ollamaBaseUrl).catch(() => {});
+              }
+              if (ollamaModel) {
+                setOllamaModel(ollamaModel).catch(() => {});
+              }
             });
           }
         };
@@ -330,6 +359,10 @@ export const useSettingsStore = create<SettingsState>()(
             preferDiscountedPrice: state.preferDiscountedPrice ?? false,
             grsaiCreditTierId: normalizeGrsaiCreditTierId(state.grsaiCreditTierId),
             juyouapiBaseUrl: (state as { juyouapiBaseUrl?: string }).juyouapiBaseUrl ?? '',
+            ollamaBaseUrl: (state as { ollamaBaseUrl?: string }).ollamaBaseUrl ?? 'http://localhost:11434',
+            ollamaModel: (state as { ollamaModel?: string }).ollamaModel ?? '',
+            aiAssistantProvider: (state as { aiAssistantProvider?: string }).aiAssistantProvider ?? '666api',
+            aiAssistantModel: (state as { aiAssistantModel?: string }).aiAssistantModel ?? '',
           };
         }
 
@@ -357,6 +390,9 @@ export const useSettingsStore = create<SettingsState>()(
           usdToCnyRate: normalizeUsdToCnyRate(state.usdToCnyRate),
           preferDiscountedPrice: state.preferDiscountedPrice ?? false,
           grsaiCreditTierId: normalizeGrsaiCreditTierId(state.grsaiCreditTierId),
+          ollamaBaseUrl: (state as { ollamaBaseUrl?: string }).ollamaBaseUrl ?? 'http://localhost:11434',
+          ollamaModel: (state as { ollamaModel?: string }).ollamaModel ?? '',
+          aiAssistantProvider: (state as { aiAssistantProvider?: string }).aiAssistantProvider ?? '666api',
         };
       },
     }

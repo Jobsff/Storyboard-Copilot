@@ -15,7 +15,8 @@ import { listModelProviders } from '@/features/canvas/models';
 import { GRSAI_NANO_BANANA_PRO_MODEL_OPTIONS } from '@/features/canvas/models/providers/grsai';
 import { API666_KEY_GROUPS } from '@/features/canvas/models/providers/api666';
 import { provider as juyouapiProvider } from '@/features/canvas/models/providers/juyouapi';
-import { setJuyouapiBaseUrl as invokeSetJuyouapiBaseUrl } from '@/commands/ai';
+import { provider as ollamaProvider } from '@/features/canvas/models/providers/ollama';
+import { setJuyouapiBaseUrl as invokeSetJuyouapiBaseUrl, setOllamaBaseUrl as invokeSetOllamaBaseUrl, setOllamaModel as invokeSetOllamaModel } from '@/commands/ai';
 import { GRSAI_CREDIT_TIERS } from '@/features/canvas/pricing/types';
 import providerGuideMarkdown from '../../docs/settings/provider-guide.md?raw';
 import type { SettingsCategory } from '@/features/settings/settingsEvents';
@@ -93,6 +94,10 @@ export function SettingsDialog({
   const {
     apiKeys,
     juyouapiBaseUrl,
+    ollamaBaseUrl,
+    ollamaModel,
+    aiAssistantProvider,
+    aiAssistantModel,
     grsaiNanoBananaProModel,
     hideProviderGuidePopover,
     downloadPresetPaths,
@@ -116,6 +121,10 @@ export function SettingsDialog({
     enableUpdateDialog,
     setProviderApiKey,
     setJuyouapiBaseUrl,
+    setOllamaBaseUrl,
+    setOllamaModel,
+    setAiAssistantProvider,
+    setAiAssistantModel,
     setGrsaiNanoBananaProModel,
     setDownloadPresetPaths,
     setUseUploadFilenameAsNodeTitle,
@@ -152,6 +161,8 @@ export function SettingsDialog({
   const [localGrsaiNanoBananaProModel, setLocalGrsaiNanoBananaProModel] = useState(
     grsaiNanoBananaProModel
   );
+  const [localOllamaBaseUrl, setLocalOllamaBaseUrl] = useState(ollamaBaseUrl);
+  const [localOllamaModel, setLocalOllamaModel] = useState(ollamaModel);
   const [localDownloadPathInput, setLocalDownloadPathInput] = useState('');
   const [localDownloadPresetPaths, setLocalDownloadPresetPaths] = useState(downloadPresetPaths);
   const [localUseUploadFilenameAsNodeTitle, setLocalUseUploadFilenameAsNodeTitle] = useState(
@@ -219,6 +230,8 @@ export function SettingsDialog({
     setLocalApiKeys(apiKeys);
     setLocalDownloadPresetPaths(downloadPresetPaths);
     setLocalGrsaiNanoBananaProModel(grsaiNanoBananaProModel);
+    setLocalOllamaBaseUrl(ollamaBaseUrl);
+    setLocalOllamaModel(ollamaModel);
     setLocalUseUploadFilenameAsNodeTitle(useUploadFilenameAsNodeTitle);
     setLocalStoryboardGenKeepStyleConsistent(storyboardGenKeepStyleConsistent);
     setLocalStoryboardGenDisableTextInImage(storyboardGenDisableTextInImage);
@@ -254,6 +267,13 @@ export function SettingsDialog({
     if (juyouapiBaseUrl.trim()) {
       invokeSetJuyouapiBaseUrl(juyouapiBaseUrl.trim()).catch(() => {});
     }
+    // Sync Ollama config to Rust backend when settings dialog opens
+    if (ollamaBaseUrl.trim()) {
+      invokeSetOllamaBaseUrl(ollamaBaseUrl.trim()).catch(() => {});
+    }
+    if (ollamaModel.trim()) {
+      invokeSetOllamaModel(ollamaModel.trim()).catch(() => {});
+    }
   }, [initialCategory, isOpen]);
 
   const handleSave = useCallback(() => {
@@ -261,6 +281,8 @@ export function SettingsDialog({
       setProviderApiKey(provider.id, localApiKeys[provider.id] ?? '');
     });
     setGrsaiNanoBananaProModel(localGrsaiNanoBananaProModel);
+    setOllamaBaseUrl(localOllamaBaseUrl);
+    setOllamaModel(localOllamaModel);
     setDownloadPresetPaths(localDownloadPresetPaths);
     setUseUploadFilenameAsNodeTitle(localUseUploadFilenameAsNodeTitle);
     setStoryboardGenKeepStyleConsistent(localStoryboardGenKeepStyleConsistent);
@@ -285,6 +307,8 @@ export function SettingsDialog({
     localApiKeys,
     localDownloadPresetPaths,
     localGrsaiNanoBananaProModel,
+    localOllamaBaseUrl,
+    localOllamaModel,
     localUseUploadFilenameAsNodeTitle,
     localStoryboardGenKeepStyleConsistent,
     localStoryboardGenDisableTextInImage,
@@ -306,6 +330,8 @@ export function SettingsDialog({
     providers,
     setProviderApiKey,
     setGrsaiNanoBananaProModel,
+    setOllamaBaseUrl,
+    setOllamaModel,
     setDownloadPresetPaths,
     setUseUploadFilenameAsNodeTitle,
     setStoryboardGenKeepStyleConsistent,
@@ -512,6 +538,49 @@ export function SettingsDialog({
                 </div>
 
                 <div className="ui-scrollbar flex-1 space-y-4 overflow-y-auto p-6">
+                  <div className="rounded-lg border border-border-dark bg-bg-dark p-4">
+                    <div className="mb-3">
+                      <h3 className="text-sm font-medium text-text-dark">
+                        {i18n.language.startsWith('zh') ? 'AI 助手服务商' : 'AI Assistant Provider'}
+                      </h3>
+                      <p className="text-xs text-text-muted mt-1">
+                        {i18n.language.startsWith('zh')
+                          ? '用于反推提示词、Prompt 工程师等文本 AI 功能的服务商和模型'
+                          : 'Provider and model used for reverse prompt, prompt engineer, and other text AI features'}
+                      </p>
+                    </div>
+                    <div className="mb-3">
+                      <div className="mb-1 text-xs font-medium text-text-muted">
+                        {i18n.language.startsWith('zh') ? '服务商' : 'Provider'}
+                      </div>
+                      <UiSelect
+                        value={aiAssistantProvider}
+                        onChange={(event) => setAiAssistantProvider(event.target.value)}
+                        className="h-9 text-sm"
+                      >
+                        <option value="666api">666API</option>
+                        <option value="juyouapi">{i18n.language.startsWith('zh') ? '巨游API' : 'JuyouAPI'}</option>
+                        <option value="ollama">Ollama</option>
+                      </UiSelect>
+                    </div>
+                    <div>
+                      <div className="mb-1 text-xs font-medium text-text-muted">
+                        {i18n.language.startsWith('zh') ? '模型名称' : 'Model Name'}
+                      </div>
+                      <input
+                        type="text"
+                        value={aiAssistantModel}
+                        onChange={(event) => setAiAssistantModel(event.target.value)}
+                        placeholder={
+                          aiAssistantProvider === 'ollama'
+                            ? 'gemma4:e4b'
+                            : 'doubao-seed-2-0-mini-260215'
+                        }
+                        className="w-full rounded border border-border-dark bg-surface-dark px-3 py-2 text-sm text-text-dark placeholder:text-text-muted"
+                      />
+                    </div>
+                  </div>
+
                   {providers.map((provider) => {
                     const displayName = i18n.language.startsWith('zh') ? provider.label : provider.name;
 
@@ -627,6 +696,92 @@ export function SettingsDialog({
                                 )}
                               </button>
                             </div>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    if (provider.id === 'ollama') {
+                      return (
+                        <div key={provider.id} className="rounded-lg border border-border-dark bg-bg-dark p-4">
+                          <div className="mb-3">
+                            <h3 className="text-sm font-medium text-text-dark">Ollama</h3>
+                            <p className="text-xs text-text-muted mt-1">
+                              {i18n.language.startsWith('zh')
+                                ? '本地部署的 Ollama 模型服务'
+                                : 'Locally deployed Ollama model service'}
+                            </p>
+                          </div>
+                          <div className="mb-3">
+                            <div className="mb-1 text-xs font-medium text-text-muted">{t('settings.ollamaBaseUrl')}</div>
+                            <input
+                              type="text"
+                              value={localOllamaBaseUrl}
+                              onChange={(event) => {
+                                setLocalOllamaBaseUrl(event.target.value);
+                              }}
+                              onBlur={() => {
+                                if (localOllamaBaseUrl.trim()) {
+                                  setOllamaBaseUrl(localOllamaBaseUrl.trim());
+                                  invokeSetOllamaBaseUrl(localOllamaBaseUrl.trim()).catch(() => {});
+                                }
+                              }}
+                              placeholder={t('settings.ollamaBaseUrlPlaceholder')}
+                              className="w-full rounded border border-border-dark bg-surface-dark px-3 py-2 text-sm text-text-dark placeholder:text-text-muted"
+                            />
+                          </div>
+                          <div className="mb-3">
+                            <div className="mb-1 text-xs font-medium text-text-muted">{t('settings.enterApiKey')}</div>
+                            <div className="relative">
+                              <input
+                                type={Boolean(revealedApiKeys[ollamaProvider.id]) ? 'text' : 'password'}
+                                value={localApiKeys[ollamaProvider.id] ?? ''}
+                                onChange={(event) => {
+                                  const nextValue = event.target.value;
+                                  setLocalApiKeys((previous) => ({
+                                    ...previous,
+                                    [ollamaProvider.id]: nextValue,
+                                  }));
+                                  setProviderApiKey(ollamaProvider.id, nextValue);
+                                }}
+                                placeholder={t('settings.enterApiKey')}
+                                className="w-full rounded border border-border-dark bg-surface-dark px-3 py-2 pr-10 text-sm text-text-dark placeholder:text-text-muted"
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setRevealedApiKeys((previous) => ({
+                                    ...previous,
+                                    [ollamaProvider.id]: !previous[ollamaProvider.id],
+                                  }))
+                                }
+                                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 hover:bg-bg-dark"
+                              >
+                                {revealedApiKeys[ollamaProvider.id] ? (
+                                  <EyeOff className="h-4 w-4 text-text-muted" />
+                                ) : (
+                                  <Eye className="h-4 w-4 text-text-muted" />
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                          <div>
+                            <div className="mb-1 text-xs font-medium text-text-muted">{t('settings.ollamaModel')}</div>
+                            <input
+                              type="text"
+                              value={localOllamaModel}
+                              onChange={(event) => {
+                                setLocalOllamaModel(event.target.value);
+                              }}
+                              onBlur={() => {
+                                if (localOllamaModel.trim()) {
+                                  setOllamaModel(localOllamaModel.trim());
+                                  invokeSetOllamaModel(localOllamaModel.trim()).catch(() => {});
+                                }
+                              }}
+                              placeholder={t('settings.ollamaModelPlaceholder')}
+                              className="w-full rounded border border-border-dark bg-surface-dark px-3 py-2 text-sm text-text-dark placeholder:text-text-muted"
+                            />
                           </div>
                         </div>
                       );

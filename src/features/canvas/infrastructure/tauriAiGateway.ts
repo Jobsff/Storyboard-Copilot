@@ -85,6 +85,7 @@ export const tauriAiGateway: AiGateway = {
       image: normalizedImage,
       language: payload.language,
       format: payload.format,
+      model: payload.model,
     });
   },
 };

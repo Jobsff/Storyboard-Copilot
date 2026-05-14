@@ -14,6 +14,7 @@ export interface ReversePromptRequest {
   image: string;
   language?: string;
   format?: 'text' | 'json';
+  model?: string;
 }
 
 export type GenerationJobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'not_found';
@@ -270,6 +271,7 @@ export async function reversePrompt(request: ReversePromptRequest): Promise<stri
         image: request.image,
         language: request.language,
         format: request.format,
+        model: request.model ?? null,
       },
     });
     if (typeof rawResult !== 'string') {
@@ -314,6 +316,8 @@ export interface CraftImagePromptRequest {
   apiKey: string;
   userInput: string;
   category?: string;
+  model?: string;
+  language?: string;
 }
 
 export async function craftImagePrompt(request: CraftImagePromptRequest): Promise<string> {
@@ -335,6 +339,8 @@ export async function craftImagePrompt(request: CraftImagePromptRequest): Promis
       apiKey: request.apiKey,
       userInput: request.userInput,
       category: request.category ?? null,
+      model: request.model ?? null,
+      language: request.language ?? null,
     });
     const result = rawResult.trim();
     if (!result) {
@@ -362,4 +368,14 @@ export async function craftImagePrompt(request: CraftImagePromptRequest): Promis
 export async function setJuyouapiBaseUrl(baseUrl: string): Promise<void> {
   if (!isTauri()) return;
   await invoke('set_juyouapi_base_url', { baseUrl });
+}
+
+export async function setOllamaBaseUrl(baseUrl: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke('set_ollama_base_url', { baseUrl });
+}
+
+export async function setOllamaModel(model: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke('set_ollama_model', { model });
 }

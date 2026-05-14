@@ -203,6 +203,8 @@ impl Api666Provider {
             &api_key,
             user_input,
             category,
+            None,
+            None,
         )
         .await
     }
@@ -302,17 +304,20 @@ async fn reverse_prompt_via_chat_completions(
     image_source: &str,
     language: Option<&str>,
     format: Option<&str>,
+    model_override: Option<&str>,
 ) -> Result<String, AIError> {
     let data_url = prepare_reverse_prompt_image_data_url(image_source)?;
     let endpoint = format!("{}/v1/chat/completions", base_url);
     let resolved_language = language.unwrap_or("zh").trim().to_ascii_lowercase();
     let resolved_format = format.unwrap_or("text").trim().to_ascii_lowercase();
-    let resolved_model = if resolved_format == "json" {
-        "doubao-seed-2-0-mini-260215"
+    let resolved_model = if let Some(m) = model_override {
+        m.to_string()
+    } else if resolved_format == "json" {
+        "doubao-seed-2-0-mini-260215".to_string()
     } else if resolved_language == "en" {
-        "gemini-3.1-flash-image-preview"
+        "gemini-3.1-flash-image-preview".to_string()
     } else {
-        "doubao-seed-2-0-mini-260215"
+        "doubao-seed-2-0-mini-260215".to_string()
     };
 
     let system_text = if resolved_format == "json" {
@@ -733,16 +738,22 @@ pub async fn craft_image_prompt(
     api_key: &str,
     user_input: &str,
     category: Option<&str>,
+    model_override: Option<&str>,
+    language: Option<&str>,
 ) -> Result<String, AIError> {
     let endpoint = format!("{}/v1/chat/completions", base_url);
-    let model = "doubao-seed-2-0-mini-260215";
+    let model = model_override.unwrap_or("doubao-seed-2-0-mini-260215");
 
-    let system_content = match category {
+    let mut system_content = match category {
         Some(cat) if !cat.is_empty() && cat != "general" => {
             format!("{}{}", CRAFT_IMAGE_PROMPT_SYSTEM, resolve_craft_category_hint(cat))
         }
         _ => CRAFT_IMAGE_PROMPT_SYSTEM.to_string(),
     };
+
+    if language == Some("zh") {
+        system_content.push_str("\n\n特别要求：提示词必须使用中文输出。不要使用英文，所有描述都用简体中文。画面中需要精确呈现的文字内容保留原文并用引号包裹。");
+    }
 
     let body = json!({
         "model": model,
@@ -1845,6 +1856,7 @@ impl AIProvider for Api666Provider {
         image: String,
         language: Option<String>,
         format: Option<String>,
+        model: Option<String>,
     ) -> Result<String, AIError> {
         let api_key = self
             .api_key
@@ -1862,8 +1874,28 @@ impl AIProvider for Api666Provider {
             &image,
             language.as_deref(),
             format.as_deref(),
+            model.as_deref(),
         )
         .await
+    }
+
+    async fn craft_image_prompt(
+        &self,
+        user_input: &str,
+        category: Option<&str>,
+        model: Option<&str>,
+        language: Option<&str>,
+    ) -> Result<String, AIError> {
+        let api_key = self
+            .api_key
+            .read()
+            .await
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| AIError::InvalidRequest("API key not set".to_string()))?;
+        let base_url = self.base_url.read().await.clone();
+
+        craft_image_prompt(&self.client, &base_url, &api_key, user_input, category, model, language).await
     }
 
     async fn generate(&self, request: GenerateRequest) -> Result<String, AIError> {

@@ -1931,7 +1931,6 @@ export function Canvas() {
 
       <PromptEngineerDialog
         isOpen={showPromptEngineerDialog}
-        apiKey={apiKeys['666api_default'] ?? ''}
         onClose={() => setShowPromptEngineerDialog(false)}
         onConfirm={(prompt) => {
           const newNodeId = addNode(CANVAS_NODE_TYPES.imageEdit, flowPosition, {
