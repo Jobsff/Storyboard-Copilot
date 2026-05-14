@@ -57,6 +57,7 @@ import { GRSAI_NANO_BANANA_PRO_MODEL_ID } from '@/features/canvas/models/image/g
 import { FAL_NANO_BANANA_2_MODEL_ID } from '@/features/canvas/models/image/fal/nanoBanana2';
 import { KIE_NANO_BANANA_2_MODEL_ID } from '@/features/canvas/models/image/kie/nanoBanana2';
 import { API666_GPT_IMAGE_2_MODEL_ID } from '@/features/canvas/models/image/api666/gptImage2';
+import { JUYOUAPI_GPT_IMAGE_2_MODEL_ID } from '@/features/canvas/models/image/juyouapi/gptImage2';
 import { resolve666ApiKey, resolve666ReversePromptKeyId } from '@/features/canvas/models/providers/api666';
 import { resolveModelPriceDisplay } from '@/features/canvas/pricing';
 import {
@@ -288,7 +289,9 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
   }, [data.model]);
   const providerApiKey = selectedModel.providerId === '666api'
     ? (resolve666ApiKey(selectedModel.id, apiKeys) ?? '')
-    : (apiKeys[selectedModel.providerId] ?? '');
+    : selectedModel.providerId === 'juyouapi'
+      ? (apiKeys['juyouapi'] ?? '')
+      : (apiKeys[selectedModel.providerId] ?? '');
   const effectiveExtraParams = useMemo<Record<string, unknown>>(
     () => ({
       ...(data.extraParams ?? {}),
@@ -607,7 +610,8 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
       await canvasAiGateway.setApiKey(selectedModel.providerId, providerApiKey);
 
       const finalPrompt =
-        selectedModel.id === API666_GPT_IMAGE_2_MODEL_ID &&
+        (selectedModel.id === API666_GPT_IMAGE_2_MODEL_ID ||
+          selectedModel.id === JUYOUAPI_GPT_IMAGE_2_MODEL_ID) &&
         Boolean(effectiveExtraParams[TRANSPARENT_BACKGROUND_EXTRA_PARAM_KEY])
           ? applyTransparentBackgroundHint(prompt)
           : prompt;

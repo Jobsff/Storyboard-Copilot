@@ -16,6 +16,7 @@ export const DEFAULT_GRSAI_NANO_BANANA_PRO_MODEL = 'nano-banana-pro';
 interface SettingsState {
   isHydrated: boolean;
   apiKeys: ProviderApiKeys;
+  juyouapiBaseUrl: string;
   grsaiNanoBananaProModel: string;
   hideProviderGuidePopover: boolean;
   downloadPresetPaths: string[];
@@ -39,6 +40,7 @@ interface SettingsState {
   enableUpdateDialog: boolean;
   setHydrated: (hydrated: boolean) => void;
   setProviderApiKey: (providerId: string, key: string) => void;
+  setJuyouapiBaseUrl: (url: string) => void;
   setGrsaiNanoBananaProModel: (model: string) => void;
   setHideProviderGuidePopover: (hide: boolean) => void;
   setDownloadPresetPaths: (paths: string[]) => void;
@@ -164,6 +166,7 @@ export const useSettingsStore = create<SettingsState>()(
     (set) => ({
       isHydrated: false,
       apiKeys: {},
+      juyouapiBaseUrl: '',
       grsaiNanoBananaProModel: DEFAULT_GRSAI_NANO_BANANA_PRO_MODEL,
       hideProviderGuidePopover: false,
       downloadPresetPaths: [],
@@ -193,6 +196,7 @@ export const useSettingsStore = create<SettingsState>()(
             [providerId]: normalizeApiKey(key),
           },
         })),
+      setJuyouapiBaseUrl: (url) => set({ juyouapiBaseUrl: url.trim() }),
       setGrsaiNanoBananaProModel: (model) =>
         set({
           grsaiNanoBananaProModel: normalizeGrsaiNanoBananaProModel(model),
@@ -238,13 +242,20 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'settings-storage',
-      version: 11,
+      version: 13,
       onRehydrateStorage: () => {
         return (state, error) => {
           if (error) {
             console.error('failed to hydrate settings storage', error);
           }
           state?.setHydrated(true);
+          // Sync juyouapi base URL to Rust backend on hydration
+          const baseUrl = state?.juyouapiBaseUrl?.trim();
+          if (baseUrl) {
+            import('@/commands/ai').then(({ setJuyouapiBaseUrl }) => {
+              setJuyouapiBaseUrl(baseUrl).catch(() => {});
+            });
+          }
         };
       },
       migrate: (persistedState: unknown) => {
@@ -276,6 +287,21 @@ export const useSettingsStore = create<SettingsState>()(
           migratedApiKeys['666api_default'] = existingKey;
           delete migratedApiKeys['666api'];
         }
+        // Migrate juyouapi group keys to single key
+        if (!migratedApiKeys['juyouapi']) {
+          const singleKey =
+            migratedApiKeys['juyouapi_default'] ||
+            migratedApiKeys['juyouapi_gemini'] ||
+            migratedApiKeys['juyouapi_gpt'] ||
+            migratedApiKeys['juyouapi_claude'];
+          if (singleKey) {
+            migratedApiKeys['juyouapi'] = singleKey;
+          }
+        }
+        delete migratedApiKeys['juyouapi_default'];
+        delete migratedApiKeys['juyouapi_gemini'];
+        delete migratedApiKeys['juyouapi_gpt'];
+        delete migratedApiKeys['juyouapi_claude'];
         const ignoreAtTagWhenCopyingAndGenerating =
           state.ignoreAtTagWhenCopyingAndGenerating ?? true;
         if (Object.keys(migratedApiKeys).length > 0) {
@@ -303,6 +329,7 @@ export const useSettingsStore = create<SettingsState>()(
             usdToCnyRate: normalizeUsdToCnyRate(state.usdToCnyRate),
             preferDiscountedPrice: state.preferDiscountedPrice ?? false,
             grsaiCreditTierId: normalizeGrsaiCreditTierId(state.grsaiCreditTierId),
+            juyouapiBaseUrl: (state as { juyouapiBaseUrl?: string }).juyouapiBaseUrl ?? '',
           };
         }
 

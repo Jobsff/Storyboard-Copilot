@@ -20,6 +20,7 @@ import {
   UiSelect,
 } from '@/components/ui';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { resolve666ApiKey } from '@/features/canvas/models/providers/api666';
 import { openSettingsDialog } from '@/features/settings/settingsEvents';
 
 interface ModelParamsControlsProps {
@@ -483,7 +484,14 @@ export const ModelParamsControls = memo(({
                           }`}
                         onClick={(event) => {
                           event.stopPropagation();
-                          const providerApiKey = (apiKeys[provider.id] ?? '').trim();
+                          let providerApiKey: string;
+                          if (provider.id === '666api') {
+                            providerApiKey = resolve666ApiKey('666api/default', apiKeys) ?? '';
+                          } else if (provider.id === 'juyouapi') {
+                            providerApiKey = (apiKeys['juyouapi'] ?? '').trim();
+                          } else {
+                            providerApiKey = (apiKeys[provider.id] ?? '').trim();
+                          }
                           if (!providerApiKey) {
                             setOpenPanel(null);
                             setMissingKeyProviderName(provider.label || provider.name);

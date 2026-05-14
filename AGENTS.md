@@ -184,6 +184,7 @@ npm run release -- patch --notes-file docs/releases/v0.1.12.md
   - 支持分辨率/比例
   - 默认参数
   - 请求映射函数 `resolveRequest`
+- 666API 密钥分组：claude 模型用 `666api_claude` key，gpt 模型用 `666api_gpt` key，gemini 模型用 `666api_gemini` key，其余模型用 `666api_default` key。前端通过 `resolveApiKey()` 自动路由，新增模型须在 `api666.ts` 的映射表中声明分组。
 
 ### 8.2 新工具接入
 

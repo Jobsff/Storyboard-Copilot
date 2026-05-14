@@ -1,9 +1,10 @@
-# 自动反推提示词（666api / qwen3-vl-flash）开发方案
+# 自动反推提示词开发方案
 
 ## 目标
 
-- 在画布中从“可输出图片”的节点拉线创建新节点时，新增一个菜单项：自动反推提示词。
-- 自动调用 666api 的 `qwen3-vl-flash` 进行识图，把生成的提示词写入 AI 图片节点的提示词输入框（不自动触发生成）。
+- 在画布中从”可输出图片”的节点拉线创建新节点时，新增一个菜单项：自动反推提示词。
+- 自动调用 666api 的 `doubao-seed-2-0-mini-260215` 进行识图，把生成的提示词写入 AI 图片节点的提示词输入框（不自动触发生成）。
+- 支持两种输出模式：中文纯文本（`language=zh`）和 JSON 结构化（`language=json`）。
 
 ## 不在本方案内
 
@@ -59,13 +60,11 @@
 
 - `reverse_prompt`
   - 输入：
-    - `model`: 固定 `qwen3-vl-flash`
+    - `model`: 固定 `doubao-seed-2-0-mini-260215`（666API default 分组 key）
     - `image`: 参考图（data url 或本地 file path）
-    - `language`: `zh`（可选）
+    - `language`: `zh`（中文纯文本）或 `json`（JSON 结构化，含 color_palette、key_elements、use_case 等字段）
   - 输出：
     - `prompt`: string
-
-### 666api 调用方式
 
 - 端点：`POST https://www.666api.ai/v1/chat/completions`
 - 结构：OpenAI 兼容的 `messages`，其中 user content 包含 text + image（多模态格式）

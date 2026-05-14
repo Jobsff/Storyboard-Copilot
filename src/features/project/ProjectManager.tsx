@@ -29,7 +29,10 @@ export function ProjectManager() {
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const providerIds = useMemo(() => {
     const baseIds = listModelProviders().map((provider) => provider.id);
-    return baseIds.flatMap((id) => id === '666api' ? API666_KEY_GROUPS.map((g) => g.id) : [id]);
+    return baseIds.flatMap((id) =>
+      id === '666api' ? API666_KEY_GROUPS.map((g) => g.id)
+      : [id]
+    );
   }, []);
   const configuredApiKeyCount = useSettingsStore((state) =>
     getConfiguredApiKeyCount(state.apiKeys, providerIds)

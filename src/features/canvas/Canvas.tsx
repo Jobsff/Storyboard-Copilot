@@ -470,6 +470,8 @@ export function Canvas() {
                 const debugContext = currentData.generationDebugContext as { requestModel?: string } | undefined;
                 const model = debugContext?.requestModel ?? '';
                 providerApiKey = resolve666ApiKey(model, apiKeys);
+              } else if (generationProviderId === 'juyouapi') {
+                providerApiKey = apiKeys['juyouapi'];
               } else {
                 providerApiKey = apiKeys[generationProviderId] ?? '';
               }
@@ -1133,7 +1135,9 @@ export function Canvas() {
       const selectedModel = getImageModel(modelId);
       const providerApiKey = selectedModel.providerId === '666api'
         ? resolve666ApiKey(modelId, apiKeys)
-        : (apiKeys[selectedModel.providerId] ?? '');
+        : selectedModel.providerId === 'juyouapi'
+          ? apiKeys['juyouapi']
+          : (apiKeys[selectedModel.providerId] ?? '');
       if (!providerApiKey) {
         const errorMessage = t('node.imageEdit.apiKeyRequired');
         void showErrorDialog(errorMessage, t('common.error'));

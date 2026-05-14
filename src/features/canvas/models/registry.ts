@@ -20,6 +20,8 @@ const providers: ModelProviderDefinition[] = Object.values(providerModules)
   .sort((a, b) => {
     if (a.id === '666api') return -1;
     if (b.id === '666api') return 1;
+    if (a.id === 'juyouapi') return -1;
+    if (b.id === 'juyouapi') return 1;
     return a.id.localeCompare(b.id);
   });
 

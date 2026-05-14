@@ -14,6 +14,8 @@ import { useDialogTransition } from '@/components/ui/useDialogTransition';
 import { listModelProviders } from '@/features/canvas/models';
 import { GRSAI_NANO_BANANA_PRO_MODEL_OPTIONS } from '@/features/canvas/models/providers/grsai';
 import { API666_KEY_GROUPS } from '@/features/canvas/models/providers/api666';
+import { provider as juyouapiProvider } from '@/features/canvas/models/providers/juyouapi';
+import { setJuyouapiBaseUrl as invokeSetJuyouapiBaseUrl } from '@/commands/ai';
 import { GRSAI_CREDIT_TIERS } from '@/features/canvas/pricing/types';
 import providerGuideMarkdown from '../../docs/settings/provider-guide.md?raw';
 import type { SettingsCategory } from '@/features/settings/settingsEvents';
@@ -90,6 +92,7 @@ export function SettingsDialog({
   const { t, i18n } = useTranslation();
   const {
     apiKeys,
+    juyouapiBaseUrl,
     grsaiNanoBananaProModel,
     hideProviderGuidePopover,
     downloadPresetPaths,
@@ -112,6 +115,7 @@ export function SettingsDialog({
     autoCheckAppUpdateOnLaunch,
     enableUpdateDialog,
     setProviderApiKey,
+    setJuyouapiBaseUrl,
     setGrsaiNanoBananaProModel,
     setDownloadPresetPaths,
     setUseUploadFilenameAsNodeTitle,
@@ -246,6 +250,10 @@ export function SettingsDialog({
     }
 
     setActiveCategory(initialCategory);
+    // Sync juyouapi base URL to Rust backend when settings dialog opens
+    if (juyouapiBaseUrl.trim()) {
+      invokeSetJuyouapiBaseUrl(juyouapiBaseUrl.trim()).catch(() => {});
+    }
   }, [initialCategory, isOpen]);
 
   const handleSave = useCallback(() => {
@@ -556,6 +564,69 @@ export function SettingsDialog({
                                 </div>
                               );
                             })}
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    if (provider.id === 'juyouapi') {
+                      return (
+                        <div key={provider.id} className="rounded-lg border border-border-dark bg-bg-dark p-4">
+                          <div className="mb-3">
+                            <h3 className="text-sm font-medium text-text-dark">巨游API</h3>
+                          </div>
+                          <div className="mb-3">
+                            <div className="mb-1 text-xs font-medium text-text-muted">{t('settings.juyouapiBaseUrl')}</div>
+                            <input
+                              type="text"
+                              value={juyouapiBaseUrl}
+                              onChange={(event) => {
+                                const url = event.target.value;
+                                setJuyouapiBaseUrl(url);
+                              }}
+                              onBlur={() => {
+                                if (juyouapiBaseUrl.trim()) {
+                                  invokeSetJuyouapiBaseUrl(juyouapiBaseUrl.trim()).catch(() => {});
+                                }
+                              }}
+                              placeholder={t('settings.juyouapiBaseUrlPlaceholder')}
+                              className="w-full rounded border border-border-dark bg-surface-dark px-3 py-2 text-sm text-text-dark placeholder:text-text-muted"
+                            />
+                          </div>
+                          <div>
+                            <div className="mb-1 text-xs font-medium text-text-muted">{t('settings.enterApiKey')}</div>
+                            <div className="relative">
+                              <input
+                                type={Boolean(revealedApiKeys[juyouapiProvider.id]) ? 'text' : 'password'}
+                                value={localApiKeys[juyouapiProvider.id] ?? ''}
+                                onChange={(event) => {
+                                  const nextValue = event.target.value;
+                                  setLocalApiKeys((previous) => ({
+                                    ...previous,
+                                    [juyouapiProvider.id]: nextValue,
+                                  }));
+                                  setProviderApiKey(juyouapiProvider.id, nextValue);
+                                }}
+                                placeholder={t('settings.enterApiKey')}
+                                className="w-full rounded border border-border-dark bg-surface-dark px-3 py-2 pr-10 text-sm text-text-dark placeholder:text-text-muted"
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setRevealedApiKeys((previous) => ({
+                                    ...previous,
+                                    [juyouapiProvider.id]: !previous[juyouapiProvider.id],
+                                  }))
+                                }
+                                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 hover:bg-bg-dark"
+                              >
+                                {revealedApiKeys[juyouapiProvider.id] ? (
+                                  <EyeOff className="h-4 w-4 text-text-muted" />
+                                ) : (
+                                  <Eye className="h-4 w-4 text-text-muted" />
+                                )}
+                              </button>
+                            </div>
                           </div>
                         </div>
                       );

@@ -221,7 +221,9 @@ export const VideoEditNode = memo(({ id, data, selected, width, height }: VideoE
   const providerId = useMemo(() => (data.model.split('/', 1)[0] ?? '').trim(), [data.model]);
   const providerApiKey = providerId === '666api'
     ? (resolve666ApiKey(data.model, apiKeys) ?? '')
-    : (providerId ? (apiKeys[providerId] ?? '') : '');
+    : providerId === 'juyouapi'
+      ? (apiKeys['juyouapi'] ?? '')
+      : (providerId ? (apiKeys[providerId] ?? '') : '');
   const resolvedTitle = useMemo(() => resolveNodeDisplayName(CANVAS_NODE_TYPES.videoEdit, data), [data]);
 
   const incomingImages = useMemo(() => graphImageResolver.collectInputImages(id, nodes, edges), [edges, id, nodes]);

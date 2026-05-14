@@ -20,7 +20,8 @@ use crate::ai::{
 pub struct Api666Provider {
     client: Client,
     api_key: Arc<RwLock<Option<String>>>,
-    base_url: String,
+    base_url: Arc<RwLock<String>>,
+    provider_id: String,
 }
 
 async fn post_json_with_retry(
@@ -157,13 +158,28 @@ impl Api666Provider {
         Self {
             client: Client::new(),
             api_key: Arc::new(RwLock::new(None)),
-            base_url: "https://www.666api.ai".to_string(),
+            base_url: Arc::new(RwLock::new("https://www.666api.ai".to_string())),
+            provider_id: "666api".to_string(),
+        }
+    }
+
+    pub fn new_with_config(provider_id: &str, base_url: &str) -> Self {
+        Self {
+            client: Client::new(),
+            api_key: Arc::new(RwLock::new(None)),
+            base_url: Arc::new(RwLock::new(base_url.to_string())),
+            provider_id: provider_id.to_string(),
         }
     }
 
     pub async fn set_api_key(&self, api_key: String) {
         let mut key = self.api_key.write().await;
         *key = Some(api_key);
+    }
+
+    pub async fn set_base_url(&self, url: String) {
+        let mut base = self.base_url.write().await;
+        *base = url;
     }
 
     pub async fn craft_image_prompt(
@@ -179,9 +195,11 @@ impl Api666Provider {
             .cloned()
             .ok_or_else(|| AIError::InvalidRequest("API key not set".to_string()))?;
 
+        let base_url = self.base_url.read().await.clone();
+
         craft_image_prompt(
             &self.client,
-            &self.base_url,
+            &base_url,
             &api_key,
             user_input,
             category,
@@ -835,10 +853,7 @@ fn prepare_openai_edit_image_png(source: &str) -> Result<Vec<u8>, AIError> {
 }
 
 fn extract_model_name(model: &str) -> Option<String> {
-    let (provider, name) = model.split_once('/')?;
-    if provider != "666api" {
-        return None;
-    }
+    let (_provider, name) = model.split_once('/')?;
     let trimmed = name.trim();
     if trimmed.is_empty() {
         return None;
@@ -973,53 +988,204 @@ async fn submit_gpt_image_2_task(
     }
 
     let raw_text = response.text().await.unwrap_or_default();
+    info!("[GPT-IMAGE-2] response (first 500 chars): {}", &raw_text.chars().take(500).collect::<String>());
     let json_value: serde_json::Value = match serde_json::from_str(&raw_text) {
         Ok(value) => value,
         Err(_) => serde_json::Value::String(raw_text.clone()),
     };
 
-    if let Ok(result) = serde_json::from_value::<Api666TaskSubmitResponse>(json_value.clone()) {
-        if result.code.unwrap_or(200) == 200 {
-            let item = result
-                .data
-                .unwrap_or_default()
-                .into_iter()
-                .next()
-                .ok_or_else(|| AIError::Provider("No task_id in response".to_string()))?;
-            let task_id = item.task_id.unwrap_or_default().trim().to_string();
-            if task_id.is_empty() {
-                return Err(AIError::Provider("No task_id in response".to_string()));
+    // Check for error in response body (some gateways return 200 with error JSON)
+    if let Some(error) = json_value.get("error") {
+        let msg = error.get("message").and_then(|m| m.as_str()).unwrap_or("unknown error");
+        return Err(AIError::Provider(format!("API error: {}", msg)));
+    }
+
+    if json_value.get("code").is_some() {
+        if let Ok(result) = serde_json::from_value::<Api666TaskSubmitResponse>(json_value.clone()) {
+            if result.code.unwrap_or(200) == 200 {
+                if let Some(item) = result.data.unwrap_or_default().into_iter().next() {
+                    if let Some(task_id) = item.task_id {
+                        let trimmed = task_id.trim().to_string();
+                        if !trimmed.is_empty() {
+                            return Ok(trimmed);
+                        }
+                    }
+                }
             }
-            return Ok(task_id);
         }
     }
 
-    if let Ok(result) = serde_json::from_value::<OpenAiImageResponse>(json_value.clone()) {
-        let item = result
-            .data
-            .unwrap_or_default()
-            .into_iter()
-            .next()
-            .ok_or_else(|| AIError::Provider("No image payload in response".to_string()))?;
-        if let Some(url) = item.url {
-            if !url.trim().is_empty() {
-                return Ok(url);
+    // Try standard OpenAI image response format: data[].url or data[].b64_json
+    if let Some(data_arr) = json_value.get("data").and_then(|d| d.as_array()) {
+        if let Some(item) = data_arr.first() {
+            if let Some(url) = item.get("url").and_then(|u| u.as_str()) {
+                if !url.trim().is_empty() {
+                    return Ok(url.to_string());
+                }
+            }
+            if let Some(b64) = item.get("b64_json").and_then(|b| b.as_str()) {
+                if !b64.trim().is_empty() {
+                    return Ok(format!("data:image/png;base64,{}", b64));
+                }
             }
         }
-        if let Some(b64) = item.b64_json {
-            if !b64.trim().is_empty() {
-                return Ok(format!("data:image/png;base64,{}", b64));
-            }
-        }
+    }
+
+    // Fallback: scan JSON for any image URL
+    if let Some(url) = json_value
+        .pointer("/data/0/url")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+    {
+        return Ok(url.to_string());
+    }
+    if let Some(b64) = json_value
+        .pointer("/data/0/b64_json")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+    {
+        return Ok(format!("data:image/png;base64,{}", b64));
     }
 
     Err(AIError::Provider(format!(
-        "No task_id or image payload in response. raw={}",
+        "No image payload in response. raw={}",
         if raw_text.len() > 2000 {
             format!("{}...(truncated)", &raw_text[..2000])
         } else {
             raw_text
         }
+    )))
+}
+
+/// Generate image via standard OpenAI-compatible /v1/images/generations endpoint.
+/// Used by non-666api providers (e.g. juyouapi) for Gemini image models.
+/// Generate image via /v1/chat/completions with Gemini model through OpenAI-compatible gateway.
+/// Used by non-666api providers (e.g. juyouapi) for Gemini image models.
+async fn submit_gemini_via_chat_completions(
+    client: &Client,
+    base_url: &str,
+    api_key: &str,
+    model_name: &str,
+    request: &GenerateRequest,
+) -> Result<String, AIError> {
+    let endpoint = format!("{}/v1/chat/completions", base_url);
+
+    let mut prompt_text = request.prompt.clone();
+    let ar = request.aspect_ratio.trim();
+    if !ar.is_empty() && ar != "auto" {
+        prompt_text = format!("Generate an image with aspect ratio {}. {}", ar, prompt_text);
+    }
+
+    let mut content_parts = vec![json!({ "type": "text", "text": prompt_text })];
+    let images = request.reference_images.as_deref().unwrap_or(&[]);
+    for image in images.iter() {
+        if let Some((mime, data)) = resolve_inline_image_payload(image) {
+            content_parts.push(json!({
+                "type": "image_url",
+                "image_url": { "url": format!("data:{};base64,{}", mime, data) }
+            }));
+        }
+    }
+
+    let body = json!({
+        "model": model_name,
+        "messages": [{
+            "role": "user",
+            "content": content_parts
+        }],
+        "max_tokens": 4096
+    });
+
+    info!("[Gemini-Chat] URL: {}, model: {}", endpoint, model_name);
+
+    let response = client
+        .post(&endpoint)
+        .bearer_auth(api_key)
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(AIError::Provider(format!(
+            "API error {}: {}",
+            status, error_text
+        )));
+    }
+
+    let raw_text = response.text().await.unwrap_or_default();
+    let json_value: serde_json::Value = match serde_json::from_str(&raw_text) {
+        Ok(value) => value,
+        Err(_) => return Err(AIError::Provider(format!("Invalid JSON response: {}", raw_text.chars().take(500).collect::<String>()))),
+    };
+
+    // Extract base64 image from chat completion response
+    // The image can be in different locations depending on the gateway:
+    // 1. choices[0].message.images[].image_url.url (巨游API format)
+    // 2. choices[0].message.content as array of parts with type "image_url"
+    // 3. choices[0].message.content as inline markdown image or data URL
+    if let Some(choices) = json_value.get("choices").and_then(|c| c.as_array()) {
+        if let Some(first_choice) = choices.first() {
+            let message = first_choice.get("message");
+
+            // Format 1: message.images array (巨游API format)
+            if let Some(images) = message.and_then(|m| m.get("images")).and_then(|i| i.as_array()) {
+                for img in images {
+                    if let Some(url) = img.pointer("/image_url/url").and_then(|u| u.as_str()) {
+                        if !url.is_empty() {
+                            return Ok(url.to_string());
+                        }
+                    }
+                }
+            }
+
+            if let Some(content) = message.and_then(|m| m.get("content")) {
+                // Format 2: content as array of parts
+                if let Some(parts) = content.as_array() {
+                    for part in parts {
+                        if part.get("type").and_then(|t| t.as_str()) == Some("image_url") {
+                            if let Some(url) = part.pointer("/image_url/url").and_then(|u| u.as_str()) {
+                                if !url.is_empty() {
+                                    return Ok(url.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                // Format 3: content as string with data URL or markdown image
+                if let Some(text) = content.as_str() {
+                    if let Some(start) = text.find("data:image/") {
+                        let rest = &text[start..];
+                        if let Some(end) = rest.find(')').or_else(|| rest.find('"')) {
+                            return Ok(rest[..end].to_string());
+                        }
+                        let end = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
+                        return Ok(rest[..end].to_string());
+                    }
+                    if let Some(bang_idx) = text.find("![") {
+                        if let Some(paren_start) = text[bang_idx..].find("](") {
+                            let url_start = bang_idx + paren_start + 2;
+                            if let Some(paren_end) = text[url_start..].find(')') {
+                                let url = &text[url_start..url_start + paren_end];
+                                if url.starts_with("http") {
+                                    return Ok(url.to_string());
+                                }
+                            }
+                        }
+                    }
+                    if text.starts_with("http") && !text.contains(' ') {
+                        return Ok(text.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    Err(AIError::Provider(format!(
+        "No image in chat completion response. raw={}",
+        if raw_text.len() > 2000 { format!("{}...(truncated)", &raw_text[..2000]) } else { raw_text }
     )))
 }
 
@@ -1533,20 +1699,29 @@ impl AIProvider for Api666Provider {
     fn as_any(&self) -> &dyn std::any::Any { self }
 
     fn name(&self) -> &str {
-        "666api"
+        self.provider_id.as_str()
     }
 
     fn supports_model(&self, model: &str) -> bool {
-        model.starts_with("666api/")
+        model.starts_with(&format!("{}/", self.provider_id))
     }
 
     fn list_models(&self) -> Vec<String> {
-        vec![
-            "666api/gemini-3.1-flash-image-preview".to_string(),
-            "666api/gemini-3-pro-image-preview".to_string(),
-            "666api/gpt-image-2".to_string(),
-            "666api/wan2.6-i2v-flash".to_string(),
-        ]
+        let prefix = format!("{}/", self.provider_id);
+        if self.provider_id == "666api" {
+            vec![
+                format!("{}gemini-3.1-flash-image-preview", prefix),
+                format!("{}gemini-3-pro-image-preview", prefix),
+                format!("{}gpt-image-2", prefix),
+                format!("{}wan2.6-i2v-flash", prefix),
+            ]
+        } else {
+            vec![
+                format!("{}gemini-3.1-flash-image", prefix),
+                format!("{}gpt-image-2", prefix),
+                format!("{}wan2.6-i2v-flash", prefix),
+            ]
+        }
     }
 
     async fn set_api_key(&self, api_key: String) -> Result<(), AIError> {
@@ -1566,6 +1741,7 @@ impl AIProvider for Api666Provider {
             .as_ref()
             .cloned()
             .ok_or_else(|| AIError::InvalidRequest("API key not set".to_string()))?;
+        let base_url = self.base_url.read().await.clone();
 
         let model_name = extract_model_name(&request.model)
             .ok_or_else(|| AIError::ModelNotSupported(request.model.clone()))?;
@@ -1585,7 +1761,7 @@ impl AIProvider for Api666Provider {
             };
             let handle = submit_wan_video_task(
                 &self.client,
-                &self.base_url,
+                &base_url,
                 &api_key,
                 &model_name,
                 &request.prompt,
@@ -1598,27 +1774,48 @@ impl AIProvider for Api666Provider {
         }
 
         if model_name == "gpt-image-2" {
-            let task_id =
-                submit_gpt_image_2_task(&self.client, &self.base_url, &api_key, &request).await?;
+            let result =
+                submit_gpt_image_2_task(&self.client, &base_url, &api_key, &request).await?;
+            if result.starts_with("http") || result.starts_with("data:") {
+                return Ok(ProviderTaskSubmission::Succeeded(result));
+            }
             return Ok(ProviderTaskSubmission::Queued(ProviderTaskHandle {
-                task_id,
+                task_id: result,
                 metadata: None,
             }));
         }
 
         if model_name.starts_with("gemini-") {
-            let image_source = generate_via_gemini_native(
+            if self.provider_id == "666api" {
+                let image_source = generate_via_gemini_native(
+                    &self.client,
+                    &base_url,
+                    &api_key,
+                    &model_name,
+                    request,
+                )
+                .await?;
+                return Ok(ProviderTaskSubmission::Succeeded(image_source));
+            }
+            // Non-666api providers (e.g. juyouapi): use standard OpenAI image endpoint
+            let result = submit_gemini_via_chat_completions(
                 &self.client,
-                &self.base_url,
+                &base_url,
                 &api_key,
                 &model_name,
-                request,
+                &request,
             )
             .await?;
-            return Ok(ProviderTaskSubmission::Succeeded(image_source));
+            if result.starts_with("http") || result.starts_with("data:") {
+                return Ok(ProviderTaskSubmission::Succeeded(result));
+            }
+            return Ok(ProviderTaskSubmission::Queued(ProviderTaskHandle {
+                task_id: result,
+                metadata: None,
+            }));
         }
 
-        Err(AIError::ModelNotSupported(format!("666api/{}", model_name)))
+        Err(AIError::ModelNotSupported(format!("{}/{}", self.provider_id, model_name)))
     }
 
     async fn poll_task(&self, handle: ProviderTaskHandle) -> Result<ProviderTaskPollResult, AIError> {
@@ -1629,6 +1826,7 @@ impl AIProvider for Api666Provider {
             .as_ref()
             .cloned()
             .ok_or_else(|| AIError::InvalidRequest("API key not set".to_string()))?;
+        let base_url = self.base_url.read().await.clone();
 
         let kind = handle
             .metadata
@@ -1637,9 +1835,9 @@ impl AIProvider for Api666Provider {
             .and_then(|value| value.as_str())
             .unwrap_or("");
         if kind == "video_wan" {
-            return poll_wan_video_task(&self.client, &self.base_url, &api_key, &handle.task_id).await;
+            return poll_wan_video_task(&self.client, &base_url, &api_key, &handle.task_id).await;
         }
-        poll_gpt_task(&self.client, &self.base_url, &api_key, &handle.task_id).await
+        poll_gpt_task(&self.client, &base_url, &api_key, &handle.task_id).await
     }
 
     async fn reverse_prompt(
@@ -1655,10 +1853,11 @@ impl AIProvider for Api666Provider {
             .as_ref()
             .cloned()
             .ok_or_else(|| AIError::InvalidRequest("API key not set".to_string()))?;
+        let base_url = self.base_url.read().await.clone();
 
         reverse_prompt_via_chat_completions(
             &self.client,
-            &self.base_url,
+            &base_url,
             &api_key,
             &image,
             language.as_deref(),
@@ -1675,6 +1874,7 @@ impl AIProvider for Api666Provider {
             .as_ref()
             .cloned()
             .ok_or_else(|| AIError::InvalidRequest("API key not set".to_string()))?;
+        let base_url = self.base_url.read().await.clone();
 
         let model_name = extract_model_name(&request.model)
             .ok_or_else(|| AIError::ModelNotSupported(request.model.clone()))?;
@@ -1694,7 +1894,7 @@ impl AIProvider for Api666Provider {
             };
             let handle = submit_wan_video_task(
                 &self.client,
-                &self.base_url,
+                &base_url,
                 &api_key,
                 &model_name,
                 &request.prompt,
@@ -1704,7 +1904,7 @@ impl AIProvider for Api666Provider {
             )
             .await?;
             for _ in 0..300 {
-                match poll_wan_video_task(&self.client, &self.base_url, &api_key, &handle.task_id).await? {
+                match poll_wan_video_task(&self.client, &base_url, &api_key, &handle.task_id).await? {
                     ProviderTaskPollResult::Running => sleep(Duration::from_secs(3)).await,
                     ProviderTaskPollResult::Succeeded(url) => return Ok(url),
                     ProviderTaskPollResult::Failed(message) => return Err(AIError::TaskFailed(message)),
@@ -1714,21 +1914,48 @@ impl AIProvider for Api666Provider {
         }
 
         if model_name.starts_with("gemini-") {
-            return generate_via_gemini_native(
+            if self.provider_id == "666api" {
+                return generate_via_gemini_native(
+                    &self.client,
+                    &base_url,
+                    &api_key,
+                    &model_name,
+                    request,
+                )
+                .await;
+            }
+            // Non-666api providers (e.g. juyouapi): use standard OpenAI image endpoint
+            let result = submit_gemini_via_chat_completions(
                 &self.client,
-                &self.base_url,
+                &base_url,
                 &api_key,
                 &model_name,
-                request,
+                &request,
             )
-            .await;
+            .await?;
+            if result.starts_with("http") || result.starts_with("data:") {
+                return Ok(result);
+            }
+            for _ in 0..60 {
+                match poll_gpt_task(&self.client, &base_url, &api_key, &result).await? {
+                    ProviderTaskPollResult::Running => {
+                        sleep(Duration::from_secs(3)).await;
+                    }
+                    ProviderTaskPollResult::Succeeded(url) => return Ok(url),
+                    ProviderTaskPollResult::Failed(message) => return Err(AIError::TaskFailed(message)),
+                }
+            }
+            return Err(AIError::Provider("Task pending too long".to_string()));
         }
 
         if model_name == "gpt-image-2" {
-            let task_id =
-                submit_gpt_image_2_task(&self.client, &self.base_url, &api_key, &request).await?;
+            let result =
+                submit_gpt_image_2_task(&self.client, &base_url, &api_key, &request).await?;
+            if result.starts_with("http") || result.starts_with("data:") {
+                return Ok(result);
+            }
             for _ in 0..60 {
-                match poll_gpt_task(&self.client, &self.base_url, &api_key, &task_id).await? {
+                match poll_gpt_task(&self.client, &base_url, &api_key, &result).await? {
                     ProviderTaskPollResult::Running => {
                         sleep(Duration::from_secs(3)).await;
                     }
@@ -1740,8 +1967,8 @@ impl AIProvider for Api666Provider {
         }
 
         Err(AIError::ModelNotSupported(format!(
-            "666api/{}",
-            model_name
+            "{}/{}",
+            self.provider_id, model_name
         )))
     }
 }

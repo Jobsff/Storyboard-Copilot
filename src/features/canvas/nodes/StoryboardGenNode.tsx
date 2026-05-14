@@ -629,7 +629,9 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
   }, [nodeData.model]);
   const providerApiKey = selectedModel.providerId === '666api'
     ? (resolve666ApiKey(selectedModel.id, apiKeys) ?? '')
-    : (apiKeys[selectedModel.providerId] ?? '');
+    : selectedModel.providerId === 'juyouapi'
+      ? (apiKeys['juyouapi'] ?? '')
+      : (apiKeys[selectedModel.providerId] ?? '');
   const effectiveExtraParams = useMemo<Record<string, unknown>>(
     () => ({
       ...(nodeData.extraParams ?? {}),

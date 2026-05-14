@@ -322,6 +322,26 @@ pub async fn craft_image_prompt(
 }
 
 #[tauri::command]
+pub async fn set_juyouapi_base_url(base_url: String) -> Result<(), String> {
+    let registry = get_registry();
+    let resolved_provider = registry
+        .get_provider("juyouapi")
+        .ok_or_else(|| "Unknown provider: juyouapi".to_string())?;
+
+    let juyou_provider = resolved_provider
+        .as_ref()
+        .as_any()
+        .downcast_ref::<Api666Provider>()
+        .ok_or_else(|| "Provider is not ApiJuyouProvider".to_string())?;
+
+    juyou_provider
+        .set_base_url(base_url)
+        .await;
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn submit_generate_image_job(
     app: AppHandle,
     request: GenerateRequestDto,

@@ -358,3 +358,8 @@ export async function craftImagePrompt(request: CraftImagePromptRequest): Promis
     throw commandError;
   }
 }
+
+export async function setJuyouapiBaseUrl(baseUrl: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke('set_juyouapi_base_url', { baseUrl });
+}

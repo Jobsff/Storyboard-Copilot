@@ -181,6 +181,7 @@ pub fn run() {
             ai_commands::set_api_key,
             ai_commands::reverse_prompt,
             ai_commands::craft_image_prompt,
+            ai_commands::set_juyouapi_base_url,
             ai_commands::submit_generate_image_job,
             ai_commands::get_generate_image_job,
             ai_commands::submit_generate_video_job,
