@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, FolderOpen, Pencil, Trash2, Download, Upload } from 'lucide-react';
+import { Plus, FolderOpen, Pencil, Trash2, Download, Upload, Wrench, ImageDown } from 'lucide-react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { useProjectStore } from '@/stores/projectStore';
 import { getConfiguredApiKeyCount, useSettingsStore } from '@/stores/settingsStore';
@@ -22,11 +22,13 @@ export function ProjectManager() {
   const [editingProjectName, setEditingProjectName] = useState('');
   const [isImporting, setIsImporting] = useState(false);
   const [exportingProjectId, setExportingProjectId] = useState<string | null>(null);
+  const [exportingImagesProjectId, setExportingImagesProjectId] = useState<string | null>(null);
   const [pendingDeleteProject, setPendingDeleteProject] = useState<{ id: string; name: string } | null>(
     null
   );
   const [sortField, setSortField] = useState<ProjectSortField>('createdAt');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const setCurrentPage = useProjectStore((state) => state.setCurrentPage);
   const providerIds = useMemo(() => {
     const baseIds = listModelProviders().map((provider) => provider.id);
     return baseIds.flatMap((id) =>
@@ -46,6 +48,7 @@ export function ProjectManager() {
     renameProject,
     openProject,
     exportProjectPackage,
+    exportProjectImages,
     importProjectPackage,
   } = useProjectStore();
 
@@ -123,6 +126,26 @@ export function ProjectManager() {
     }
   };
 
+  const handleExportImages = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      setExportingImagesProjectId(id);
+      const selectedDir = await open({ directory: true, multiple: false });
+
+      if (!selectedDir || Array.isArray(selectedDir)) {
+        return;
+      }
+
+      const count = await exportProjectImages(id, selectedDir);
+      alert(t('project.exportImagesSuccess', { count }));
+    } catch (error) {
+      const content = resolveErrorContent(error, t('project.exportImagesFailed'));
+      await showErrorDialog(content.message, t('project.exportImagesFailedTitle'), content.details);
+    } finally {
+      setExportingImagesProjectId(null);
+    }
+  };
+
   const formatDate = (timestamp: number) => {
     return new Date(timestamp).toLocaleDateString();
   };
@@ -176,8 +199,17 @@ export function ProjectManager() {
             <UiButton
               type="button"
               variant="muted"
+              onClick={() => setCurrentPage('toolbox')}
+              className="gap-2"
+            >
+              <Wrench className="w-5 h-5" />
+              {t('imageTool.toolbox')}
+            </UiButton>
+            <UiButton
+              type="button"
+              variant="muted"
               onClick={handleImportProject}
-              disabled={isImporting || Boolean(exportingProjectId)}
+              disabled={isImporting || Boolean(exportingProjectId) || Boolean(exportingImagesProjectId)}
               className="gap-2"
             >
               <Upload className="w-5 h-5" />
@@ -187,7 +219,7 @@ export function ProjectManager() {
               type="button"
               variant="primary"
               onClick={handleCreateProject}
-              disabled={isImporting || Boolean(exportingProjectId)}
+              disabled={isImporting || Boolean(exportingProjectId) || Boolean(exportingImagesProjectId)}
               className="gap-2"
             >
               <Plus className="w-5 h-5" />
@@ -219,8 +251,17 @@ export function ProjectManager() {
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
                       type="button"
+                      onClick={(e) => handleExportImages(project.id, e)}
+                      disabled={isImporting || Boolean(exportingProjectId) || exportingImagesProjectId === project.id}
+                      className="p-1 hover:bg-bg-dark rounded disabled:opacity-50"
+                      title={t('project.exportImages')}
+                    >
+                      <ImageDown className="w-4 h-4 text-text-muted hover:text-text-dark" />
+                    </button>
+                    <button
+                      type="button"
                       onClick={(e) => handleExportClick(project.id, project.name, e)}
-                      disabled={isImporting || exportingProjectId === project.id}
+                      disabled={isImporting || exportingProjectId === project.id || Boolean(exportingImagesProjectId)}
                       className="p-1 hover:bg-bg-dark rounded disabled:opacity-50"
                       title={t('project.exportProject')}
                     >
@@ -229,7 +270,7 @@ export function ProjectManager() {
                     <button
                       type="button"
                       onClick={(e) => handleRenameClick(project.id, project.name, e)}
-                      disabled={isImporting || Boolean(exportingProjectId)}
+                      disabled={isImporting || Boolean(exportingProjectId) || Boolean(exportingImagesProjectId)}
                       className="p-1 hover:bg-bg-dark rounded"
                       title={t('project.rename')}
                     >
@@ -238,7 +279,7 @@ export function ProjectManager() {
                     <button
                       type="button"
                       onClick={(e) => handleDeleteClick(project.id, project.name, e)}
-                      disabled={isImporting || Boolean(exportingProjectId)}
+                      disabled={isImporting || Boolean(exportingProjectId) || Boolean(exportingImagesProjectId)}
                       className="p-1 hover:bg-bg-dark rounded"
                       title={t('project.delete')}
                     >

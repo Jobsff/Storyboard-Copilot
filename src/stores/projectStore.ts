@@ -10,6 +10,7 @@ import {
 } from './canvasStore';
 import {
   deleteProjectRecord,
+  exportProjectImages as exportProjectImagesCommand,
   exportProjectPackage as exportProjectPackageCommand,
   getProjectRecord,
   importProjectPackage as importProjectPackageCommand,
@@ -728,8 +729,10 @@ interface ProjectState {
   currentProject: Project | null;
   isHydrated: boolean;
   isOpeningProject: boolean;
+  currentPage: 'projects' | 'toolbox';
 
   hydrate: () => Promise<void>;
+  setCurrentPage: (page: 'projects' | 'toolbox') => void;
   createProject: (name: string) => string;
   deleteProject: (id: string) => void;
   renameProject: (id: string, name: string) => void;
@@ -737,6 +740,7 @@ interface ProjectState {
   closeProject: () => void;
   getCurrentProject: () => Project | null;
   exportProjectPackage: (projectId: string, targetPath: string) => Promise<void>;
+  exportProjectImages: (projectId: string, targetDir: string) => Promise<number>;
   importProjectPackage: (sourcePath: string) => Promise<void>;
   saveCurrentProject: (
     nodes: CanvasNode[],
@@ -754,6 +758,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   currentProject: null,
   isHydrated: false,
   isOpeningProject: false,
+  currentPage: 'projects',
+
+  setCurrentPage: (page) => set({ currentPage: page }),
 
   hydrate: async () => {
     if (get().isHydrated) {
@@ -895,6 +902,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   exportProjectPackage: async (projectId, targetPath) => {
     await exportProjectPackageCommand(projectId, targetPath);
+  },
+
+  exportProjectImages: async (projectId, targetDir) => {
+    return await exportProjectImagesCommand(projectId, targetDir);
   },
 
   importProjectPackage: async (sourcePath) => {

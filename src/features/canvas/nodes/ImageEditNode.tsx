@@ -962,6 +962,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
           aspectRatioOptions={aspectRatioOptions}
           onModelChange={(modelId) => {
             updateNodeData(id, { model: modelId });
+            useSettingsStore.getState().setLastUsedImageModel(modelId);
           }}
           onResolutionChange={(resolution) => {
             updateNodeData(id, { size: resolution as ImageSize });

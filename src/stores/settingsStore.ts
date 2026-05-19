@@ -21,6 +21,7 @@ interface SettingsState {
   ollamaModel: string;
   aiAssistantProvider: string;
   aiAssistantModel: string;
+  lastUsedImageModel: string;
   grsaiNanoBananaProModel: string;
   hideProviderGuidePopover: boolean;
   downloadPresetPaths: string[];
@@ -49,6 +50,7 @@ interface SettingsState {
   setOllamaModel: (model: string) => void;
   setAiAssistantProvider: (provider: string) => void;
   setAiAssistantModel: (model: string) => void;
+  setLastUsedImageModel: (model: string) => void;
   setGrsaiNanoBananaProModel: (model: string) => void;
   setHideProviderGuidePopover: (hide: boolean) => void;
   setDownloadPresetPaths: (paths: string[]) => void;
@@ -179,6 +181,7 @@ export const useSettingsStore = create<SettingsState>()(
       ollamaModel: '',
       aiAssistantProvider: '666api',
       aiAssistantModel: '',
+      lastUsedImageModel: '',
       grsaiNanoBananaProModel: DEFAULT_GRSAI_NANO_BANANA_PRO_MODEL,
       hideProviderGuidePopover: false,
       downloadPresetPaths: [],
@@ -213,6 +216,7 @@ export const useSettingsStore = create<SettingsState>()(
       setOllamaModel: (model) => set({ ollamaModel: model.trim() }),
       setAiAssistantProvider: (provider) => set({ aiAssistantProvider: provider }),
       setAiAssistantModel: (model) => set({ aiAssistantModel: model.trim() }),
+      setLastUsedImageModel: (model) => set({ lastUsedImageModel: model }),
       setGrsaiNanoBananaProModel: (model) =>
         set({
           grsaiNanoBananaProModel: normalizeGrsaiNanoBananaProModel(model),
@@ -258,7 +262,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'settings-storage',
-      version: 14,
+      version: 15,
       onRehydrateStorage: () => {
         return (state, error) => {
           if (error) {
@@ -363,6 +367,7 @@ export const useSettingsStore = create<SettingsState>()(
             ollamaModel: (state as { ollamaModel?: string }).ollamaModel ?? '',
             aiAssistantProvider: (state as { aiAssistantProvider?: string }).aiAssistantProvider ?? '666api',
             aiAssistantModel: (state as { aiAssistantModel?: string }).aiAssistantModel ?? '',
+            lastUsedImageModel: (state as { lastUsedImageModel?: string }).lastUsedImageModel ?? '',
           };
         }
 
@@ -393,6 +398,7 @@ export const useSettingsStore = create<SettingsState>()(
           ollamaBaseUrl: (state as { ollamaBaseUrl?: string }).ollamaBaseUrl ?? 'http://localhost:11434',
           ollamaModel: (state as { ollamaModel?: string }).ollamaModel ?? '',
           aiAssistantProvider: (state as { aiAssistantProvider?: string }).aiAssistantProvider ?? '666api',
+          lastUsedImageModel: (state as { lastUsedImageModel?: string }).lastUsedImageModel ?? '',
         };
       },
     }

@@ -186,7 +186,7 @@ npm run release -- patch --notes-file docs/releases/v0.1.12.md
   - 请求映射函数 `resolveRequest`
 - 密钥配置因供应商而异：
   - 666API / 巨游API：按模型分组（claude/gpt/gemini/default），前端通过 `resolveApiKey()` 自动路由；巨游API 协议与 666API 完全相同，仅 base URL 不同。
-  - Ollama（自部署）：`ollamaBaseUrl` + `ollamaModel` + `ollamaApiKey`（可选），独立配置。
+  - Ollama（自部署）：`ollamaBaseUrl` + `ollamaModel`（独立配置），密钥通过通用 `apiKeys[ollamaProvider.id]` 存储（可选）。
 - AI 助手功能（反推提示词 / Prompt 工程师）通过 `aiAssistantProvider` + `aiAssistantModel` 设置项路由，支持 666API、巨游API、Ollama，模型名称由用户手动填写。
 
 ### 8.2 新工具接入

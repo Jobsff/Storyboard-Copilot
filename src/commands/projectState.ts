@@ -76,6 +76,13 @@ export async function exportProjectPackage(projectId: string, targetPath: string
   await invoke('export_project_package', { projectId, targetPath });
 }
 
+export async function exportProjectImages(projectId: string, targetDir: string): Promise<number> {
+  if (!isTauri()) {
+    return 0;
+  }
+  return await invoke<number>('export_project_images', { projectId, targetDir });
+}
+
 export async function importProjectPackage(sourcePath: string): Promise<ProjectSummaryRecord> {
   if (!isTauri()) {
     throw new Error('Import project package is only supported in Tauri runtime.');

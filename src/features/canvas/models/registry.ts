@@ -39,17 +39,19 @@ const imageModelMap = new Map<string, ImageModelDefinition>(
 
 export const DEFAULT_IMAGE_MODEL_ID = '666api/gemini-3.1-flash-image-preview';
 
+const HIDDEN_PROVIDERS = new Set(['kie', 'ppio', 'fal', 'grsai']);
+
 const imageModelAliasMap = new Map<string, string>([
   ['gemini-3.1-flash', 'ppio/gemini-3.1-flash'],
   ['gemini-3.1-flash-edit', 'ppio/gemini-3.1-flash'],
 ]);
 
 export function listImageModels(): ImageModelDefinition[] {
-  return imageModels;
+  return imageModels.filter((m) => !HIDDEN_PROVIDERS.has(m.providerId));
 }
 
 export function listModelProviders(): ModelProviderDefinition[] {
-  return providers;
+  return providers.filter((p) => !HIDDEN_PROVIDERS.has(p.id));
 }
 
 export function getImageModel(modelId: string): ImageModelDefinition {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ReactFlowProvider } from '@xyflow/react';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { Canvas } from './features/canvas/Canvas';
+import { ImageToolPage } from './features/imageTools/ImageToolPage';
 import { TitleBar } from './components/TitleBar';
 import { SettingsDialog } from './components/SettingsDialog';
 import { UpdateAvailableDialog, type UpdateIgnoreMode } from './components/UpdateAvailableDialog';
@@ -53,6 +54,8 @@ function App() {
   const isHydrated = useProjectStore((state) => state.isHydrated);
   const hydrate = useProjectStore((state) => state.hydrate);
   const currentProjectId = useProjectStore((state) => state.currentProjectId);
+  const currentPage = useProjectStore((state) => state.currentPage);
+  const setCurrentPage = useProjectStore((state) => state.setCurrentPage);
   const closeProject = useProjectStore((state) => state.closeProject);
 
   useEffect(() => {
@@ -217,12 +220,24 @@ function App() {
             setSettingsInitialCategory('general');
             setShowSettings(true);
           }}
-          showBackButton={!!currentProjectId}
-          onBackClick={closeProject}
+          showBackButton={!!currentProjectId || currentPage === 'toolbox'}
+          onBackClick={() => {
+            if (currentPage === 'toolbox') {
+              setCurrentPage('projects');
+            } else {
+              closeProject();
+            }
+          }}
         />
 
         <main className="flex-1 relative">
-          {currentProjectId ? <Canvas /> : <ProjectManager />}
+          {currentPage === 'toolbox' ? (
+            <ImageToolPage />
+          ) : currentProjectId ? (
+            <Canvas />
+          ) : (
+            <ProjectManager />
+          )}
         </main>
 
         <SettingsDialog

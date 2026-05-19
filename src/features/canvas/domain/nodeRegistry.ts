@@ -18,8 +18,13 @@ import {
 } from './canvasNodes';
 import { DEFAULT_NODE_DISPLAY_NAME } from './nodeDisplay';
 import { DEFAULT_IMAGE_MODEL_ID } from '../models';
+import { useSettingsStore } from '@/stores/settingsStore';
 
 export type MenuIconKey = 'upload' | 'sparkles' | 'layout' | 'text' | 'video' | 'wand';
+
+function getPreferredImageModel(): string {
+  return useSettingsStore.getState().lastUsedImageModel || DEFAULT_IMAGE_MODEL_ID;
+}
 
 export interface CanvasNodeCapabilities {
   toolbar: boolean;
@@ -97,7 +102,7 @@ const imageEditNodeDefinition: CanvasNodeDefinition<ImageEditNodeData> = {
     isSizeManuallyAdjusted: false,
     requestAspectRatio: AUTO_REQUEST_ASPECT_RATIO,
     prompt: '',
-    model: DEFAULT_IMAGE_MODEL_ID,
+    model: getPreferredImageModel(),
     size: '2K' as ImageSize,
     extraParams: {},
     autoPromptRunning: false,
@@ -132,7 +137,7 @@ const imageAutoPromptNodeDefinition: CanvasNodeDefinition<ImageEditNodeData> = {
     isSizeManuallyAdjusted: false,
     requestAspectRatio: AUTO_REQUEST_ASPECT_RATIO,
     prompt: '',
-    model: DEFAULT_IMAGE_MODEL_ID,
+    model: getPreferredImageModel(),
     size: '2K' as ImageSize,
     extraParams: {},
     autoPrompt: true,
@@ -169,7 +174,7 @@ const imageAutoPromptZhNodeDefinition: CanvasNodeDefinition<ImageEditNodeData> =
     isSizeManuallyAdjusted: false,
     requestAspectRatio: AUTO_REQUEST_ASPECT_RATIO,
     prompt: '',
-    model: DEFAULT_IMAGE_MODEL_ID,
+    model: getPreferredImageModel(),
     size: '2K' as ImageSize,
     extraParams: {},
     autoPrompt: true,
@@ -206,7 +211,7 @@ const imageAutoPromptJsonNodeDefinition: CanvasNodeDefinition<ImageEditNodeData>
     isSizeManuallyAdjusted: false,
     requestAspectRatio: AUTO_REQUEST_ASPECT_RATIO,
     prompt: '',
-    model: DEFAULT_IMAGE_MODEL_ID,
+    model: getPreferredImageModel(),
     size: '2K' as ImageSize,
     extraParams: {},
     autoPrompt: true,
@@ -440,7 +445,7 @@ const storyboardGenNodeDefinition: CanvasNodeDefinition<StoryboardGenNodeData> =
     gridCols: 2,
     frames: [],
     ratioControlMode: 'cell',
-    model: DEFAULT_IMAGE_MODEL_ID,
+    model: getPreferredImageModel(),
     size: '2K' as ImageSize,
     requestAspectRatio: AUTO_REQUEST_ASPECT_RATIO,
     extraParams: {},

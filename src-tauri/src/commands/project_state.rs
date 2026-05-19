@@ -1108,6 +1108,72 @@ pub fn export_project_package(
 }
 
 #[tauri::command]
+pub fn export_project_images(
+    app: AppHandle,
+    project_id: String,
+    target_dir: String,
+) -> Result<u32, String> {
+    let record = get_project_record(app, project_id)?
+        .ok_or_else(|| "Project not found".to_string())?;
+
+    let image_paths = extract_project_image_paths(&record.nodes_json, &record.history_json);
+
+    let dir = PathBuf::from(target_dir.trim());
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("Failed to create target directory: {}", e))?;
+
+    let mut exported: u32 = 0;
+    let mut used_filenames: HashSet<String> = HashSet::new();
+
+    for path in image_paths {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let source = Path::new(trimmed);
+        if !source.exists() {
+            continue;
+        }
+
+        let filename = source
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("image.png")
+            .to_string();
+
+        let output_name = if used_filenames.contains(&filename) {
+            let stem = source
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("image");
+            let ext = source
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("png");
+            let mut idx: u32 = 1;
+            loop {
+                let candidate = format!("{}-{}.{}", stem, idx, ext);
+                if !used_filenames.contains(&candidate) {
+                    break candidate;
+                }
+                idx += 1;
+            }
+        } else {
+            filename
+        };
+
+        used_filenames.insert(output_name.clone());
+        let output_path = dir.join(&output_name);
+        std::fs::copy(source, &output_path)
+            .map_err(|e| format!("Failed to copy image {}: {}", output_name, e))?;
+        exported += 1;
+    }
+
+    Ok(exported)
+}
+
+#[tauri::command]
 pub fn import_project_package(app: AppHandle, source_path: String) -> Result<ProjectSummaryRecord, String> {
     let file = File::open(&source_path).map_err(|e| format!("Failed to open project package: {}", e))?;
     let mut archive =
