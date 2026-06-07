@@ -1,7 +1,7 @@
 <div align="center">
   <img src="./src-tauri/icons/128x128@2x.png" width="100" height="100" alt="Storyboard Copilot" style="margin-bottom: -50px;">
   <h1 style="color: ##111227;">分镜助手</h1>
-  <h3>基于节点画布的 AI 分镜工作台，一站式完成图片生成、编辑与分镜流程</h3>
+  <h3>基于节点画布的 AI 美术工作台，一站式完成图片生成、编辑、序列帧动画与分镜流程</h3>
 
   [![Bilibili](https://img.shields.io/badge/bilibili-痕继痕迹-00AEEC?logo=bilibili)](https://space.bilibili.com/39337803)
 </div>
@@ -13,12 +13,12 @@
 ## 下载
 
 <div align="center">
-Windows 用户请下载 <strong>.exe</strong> 文件，macOS 用户请下载 <strong>.dmg</strong> 文件
+Windows 用户请下载 <strong>.exe</strong> 文件
 
 Windows 用户如果在启动时遇到了报错，请尝试安装 [WebView2 运行时](https://developer.microsoft.com/zh-cn/Microsoft-edge/webview2#download)
 
 ### Github 下载
-[![Download Latest Release](https://img.shields.io/github/v/release/henjicc/Storyboard-Copilot?style=for-the-badge&color=blue)](https://github.com/henjicc/Storyboard-Copilot/releases/latest)
+[![Download Latest Release](https://img.shields.io/github/v/release/Jobsff/Storyboard-Copilot?style=for-the-badge&color=blue)](https://github.com/Jobsff/Storyboard-Copilot/releases/latest)
 
 ### 网盘下载
 **夸克网盘**：[https://pan.quark.cn/s/5b6733a8fc8e](https://pan.quark.cn/s/5b6733a8fc8e)
@@ -107,7 +107,15 @@ npm run release -- 0.2.0 "新增分镜批量裁剪工具"
 - 同步版本号到 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`
 - 提交版本变更并创建带说明的 tag（如 `v0.2.0`）
 - 推送分支和 tag，触发 `.github/workflows/build.yml`
-- 由 Action 构建 Windows/macOS 安装包并发布到 GitHub Releases（说明显示为 tag 注释）
+- 由 Action 构建 Windows 安装包并发布到 GitHub Releases（说明显示为 tag 注释）
+
+## 核心能力
+
+- AI 图片：支持文生图、图生图、Prompt 工程师和自动反推提示词。
+- AI 视频：支持图生视频与文生视频（按所选供应商/模型能力决定）。
+- AI 序列帧：根据动作关键词生成 3x3 九宫格，人工确认后切割为动画帧。
+- Spine 工作流：支持导入 Spine 文件包，也支持从序列帧导出 `.json + .atlas + .png` 三件套。
+- 图片工具：支持裁剪、标注、缩放、切割、合并分镜和单帧打包下载。
 
 ## 项目结构（核心）
 

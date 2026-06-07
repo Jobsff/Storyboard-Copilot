@@ -13,6 +13,7 @@
 - 前端：模型与供应商通过文件自动发现（`import.meta.glob`）。
 - 后端：供应商通过 `build_default_providers()` 注册；模型通过 provider 内部注册机制发现。
 - 节点生成流程按 `selectedModel.providerId` 自动选择 API Key 与 provider。
+- OpenAI 兼容网关不一定完整支持上游所有参数；例如 GPT Image 2 的透明背景开关只写入 prompt，不向上游发送 `background=transparent` 或 `output_format=png`。
 
 ## 3. 新增模型（已有供应商）
 
@@ -183,6 +184,19 @@ pub fn build_default_providers() -> Vec<Arc<dyn AIProvider>> {
 }
 ```
 
+## 4.5 设置页与 AI 助手配置
+
+普通供应商只需要新增 `src/features/canvas/models/providers/<provider>.ts`，设置页会自动出现通用 API Key 输入项。
+
+如果供应商还需要额外配置（例如 base URL、分组密钥、本地模型名），再扩展：
+
+- `src/stores/settingsStore.ts`
+- `src/components/SettingsDialog.tsx`
+- `src/commands/ai.ts`
+- `src-tauri/src/commands/ai.rs`
+
+AI 助手功能（反推提示词、Prompt 工程师、AI 序列帧提示词改写）通过 `aiAssistantProvider` + `aiAssistantModel` 路由。新增供应商如果实现了 `reverse_prompt` 或 `craft_image_prompt`，需要同步把该供应商加入设置页的 AI 助手下拉框，并提供默认模型占位提示。
+
 ## 5. 默认模型与兼容别名
 
 文件：
@@ -233,3 +247,5 @@ npm run build
 4. 命令调用到错误供应商
 - 检查 `requestModel` 是否使用 `<provider>/<model>` 前缀。
 
+5. 上游拒绝某个可选参数
+- 不要在后端强行透传供应商未确认支持的参数；优先把用户意图写入 prompt，并在前端/工具处理链路做后处理兜底。

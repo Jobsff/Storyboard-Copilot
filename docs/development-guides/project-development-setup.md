@@ -5,7 +5,7 @@
 ## 1. 必备工具
 
 安装与配置教程请先阅读：
-[基础工具安装配置（Windows / macOS）](d:/VibeCode/Storyboard-Copilot/docs/development-guides/base-tools-installation.md)
+[基础工具安装配置（Windows / macOS）](./base-tools-installation.md)
 
 ## 1.1 基础工具
 
@@ -112,7 +112,7 @@ npm run build
 - 新增节点：先改 `domain/nodeRegistry.ts`，避免多处硬编码。
 - 新增工具：按 `tools/types.ts -> builtInTools.ts -> tool-editors -> toolProcessor.ts` 顺序接入。
 - 新增模型/供应商：参考
-  [provider-and-model-extension.md](d:/VibeCode/Storyboard-Copilot/docs/development-guides/provider-and-model-extension.md)
+  [provider-and-model-extension.md](./provider-and-model-extension.md)
 
 ## 6.3 性能约束
 
