@@ -19,7 +19,7 @@ export const imageModel: ImageModelDefinition = {
       label: '透明背景',
       labelKey: 'modelParams.transparentBackground',
       type: 'boolean',
-      description: '让模型尽量输出带有 Alpha 通道的 PNG（alpha=0 背景），适合做抠图素材。',
+      description: '通过提示词让模型尽量输出透明背景素材；不向上游发送透明背景 API 参数。',
       descriptionKey: 'modelParams.transparentBackgroundDesc',
       defaultValue: false,
     },

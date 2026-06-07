@@ -1,7 +1,7 @@
 export const TRANSPARENT_BACKGROUND_EXTRA_PARAM_KEY = 'transparent_background';
 
 const TRANSPARENT_BACKGROUND_PROMPT_HINT =
-  '背景要求：输出带有 Alpha 通道的 PNG，背景完全透明（alpha=0）';
+  '背景要求：背景透明，真实 PNG，RGBA 模式，Alpha 通道真实有效，背景区域 Alpha 值为 0，不允许棋盘格、白底、灰底、伪透明背景。';
 
 export function applyTransparentBackgroundHint(prompt: string): string {
   const trimmed = prompt.trim();

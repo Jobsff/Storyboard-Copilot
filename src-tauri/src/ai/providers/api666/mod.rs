@@ -941,68 +941,46 @@ fn format_api666_images_error(
     format!("API error {}: {}", status, raw)
 }
 
-async fn submit_gpt_image_2_task(
+async fn post_gpt_image_2_edit_request(
     client: &Client,
-    base_url: &str,
+    endpoint: &str,
     api_key: &str,
-    request: &GenerateRequest,
-) -> Result<String, AIError> {
-    let images = request.reference_images.as_deref().unwrap_or(&[]);
-    let has_reference = !images.is_empty();
-
-    let response = if has_reference {
-        let endpoint = format!("{}/v1/images/edits", base_url);
-        let output_size = resolve_openai_edit_output_size(&request.size);
-        let png_bytes = prepare_openai_edit_image_png(&images[0])?;
-        let image_part = Part::bytes(png_bytes)
-            .file_name("image.png")
-            .mime_str("image/png")
-            .map_err(|_| AIError::InvalidRequest("invalid image mime type".to_string()))?;
-        let form = Form::new()
-            .part("image", image_part)
-            .text("prompt", request.prompt.clone())
-            .text("n", "1")
-            .text("size", output_size)
-            .text("response_format", "url")
-            .text("model", "gpt-image-2");
-
-        info!("[666API GPT-IMAGE-2] edit URL: {}", endpoint);
-        client.post(&endpoint).bearer_auth(api_key).multipart(form).send().await?
+    prompt: &str,
+    output_size: &str,
+    png_bytes: &[u8],
+    response_format: Option<&str>,
+) -> Result<Response, AIError> {
+    let image_part = Part::bytes(png_bytes.to_vec())
+        .file_name("image.png")
+        .mime_str("image/png")
+        .map_err(|_| AIError::InvalidRequest("invalid image mime type".to_string()))?;
+    let form = Form::new()
+        .part("image", image_part)
+        .text("prompt", prompt.to_string())
+        .text("n", "1")
+        .text("size", output_size.to_string())
+        .text("model", "gpt-image-2");
+    let form = if let Some(format) = response_format {
+        form.text("response_format", format.to_string())
     } else {
-        let endpoint = format!("{}/v1/images/generations", base_url);
-        let resolved_size = resolve_openai_image_size(&request.size, &request.aspect_ratio);
-        let body = json!({
-            "model": "gpt-image-2",
-            "prompt": request.prompt,
-            "n": 1,
-            "size": resolved_size
-        });
-
-        info!("[666API GPT-IMAGE-2] generate URL: {}", endpoint);
-        client
-            .post(&endpoint)
-            .bearer_auth(api_key)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await?
+        form
     };
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let error_text = response.text().await.unwrap_or_default();
-        return Err(AIError::Provider(format_api666_images_error(
-            status,
-            &error_text,
-            has_reference,
-        )));
-    }
+    client.post(endpoint).bearer_auth(api_key).multipart(form).send().await.map_err(AIError::from)
+}
 
-    let raw_text = response.text().await.unwrap_or_default();
-    info!("[GPT-IMAGE-2] response (first 500 chars): {}", &raw_text.chars().take(500).collect::<String>());
-    let json_value: serde_json::Value = match serde_json::from_str(&raw_text) {
+fn should_retry_gpt_image_2_edit_with_b64(error_text: &str) -> bool {
+    let lowered = error_text.to_ascii_lowercase();
+    lowered.contains("upstream did not return image output")
+        || lowered.contains("did not return image")
+        || lowered.contains("no image")
+        || lowered.contains("image output")
+}
+
+fn parse_gpt_image_2_response_payload(raw_text: &str) -> Result<String, AIError> {
+    let json_value: serde_json::Value = match serde_json::from_str(raw_text) {
         Ok(value) => value,
-        Err(_) => serde_json::Value::String(raw_text.clone()),
+        Err(_) => serde_json::Value::String(raw_text.to_string()),
     };
 
     // Check for error in response body (some gateways return 200 with error JSON)
@@ -1063,9 +1041,139 @@ async fn submit_gpt_image_2_task(
         if raw_text.len() > 2000 {
             format!("{}...(truncated)", &raw_text[..2000])
         } else {
-            raw_text
+            raw_text.to_string()
         }
     )))
+}
+
+async fn submit_gpt_image_2_task(
+    client: &Client,
+    base_url: &str,
+    api_key: &str,
+    request: &GenerateRequest,
+) -> Result<String, AIError> {
+    let images = request.reference_images.as_deref().unwrap_or(&[]);
+    let has_reference = !images.is_empty();
+
+    if has_reference {
+        let endpoint = format!("{}/v1/images/edits", base_url);
+        let output_size = resolve_openai_edit_output_size(&request.size);
+        let png_bytes = prepare_openai_edit_image_png(&images[0])?;
+
+        info!("[666API GPT-IMAGE-2] edit URL: {}", endpoint);
+        let response = post_gpt_image_2_edit_request(
+            client,
+            &endpoint,
+            api_key,
+            &request.prompt,
+            output_size,
+            &png_bytes,
+            None,
+        )
+        .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            if should_retry_gpt_image_2_edit_with_b64(&error_text) {
+                info!("[GPT-IMAGE-2] edit default response format failed, retrying with b64_json");
+                let retry_response = post_gpt_image_2_edit_request(
+                    client,
+                    &endpoint,
+                    api_key,
+                    &request.prompt,
+                    output_size,
+                    &png_bytes,
+                    Some("b64_json"),
+                )
+                .await?;
+                if !retry_response.status().is_success() {
+                    let retry_status = retry_response.status();
+                    let retry_error_text = retry_response.text().await.unwrap_or_default();
+                    return Err(AIError::Provider(format_api666_images_error(
+                        retry_status,
+                        &retry_error_text,
+                        has_reference,
+                    )));
+                }
+                let retry_raw_text = retry_response.text().await.unwrap_or_default();
+                info!("[GPT-IMAGE-2] edit retry response (first 500 chars): {}", &retry_raw_text.chars().take(500).collect::<String>());
+                return parse_gpt_image_2_response_payload(&retry_raw_text);
+            }
+
+            return Err(AIError::Provider(format_api666_images_error(
+                status,
+                &error_text,
+                has_reference,
+            )));
+        }
+
+        let raw_text = response.text().await.unwrap_or_default();
+        info!("[GPT-IMAGE-2] edit response (first 500 chars): {}", &raw_text.chars().take(500).collect::<String>());
+        match parse_gpt_image_2_response_payload(&raw_text) {
+            Ok(result) => return Ok(result),
+            Err(AIError::Provider(message)) if should_retry_gpt_image_2_edit_with_b64(&message) => {
+                info!("[GPT-IMAGE-2] edit response body contained no image, retrying with b64_json");
+                let retry_response = post_gpt_image_2_edit_request(
+                    client,
+                    &endpoint,
+                    api_key,
+                    &request.prompt,
+                    output_size,
+                    &png_bytes,
+                    Some("b64_json"),
+                )
+                .await?;
+                if !retry_response.status().is_success() {
+                    let retry_status = retry_response.status();
+                    let retry_error_text = retry_response.text().await.unwrap_or_default();
+                    return Err(AIError::Provider(format_api666_images_error(
+                        retry_status,
+                        &retry_error_text,
+                        has_reference,
+                    )));
+                }
+                let retry_raw_text = retry_response.text().await.unwrap_or_default();
+                info!("[GPT-IMAGE-2] edit retry response (first 500 chars): {}", &retry_raw_text.chars().take(500).collect::<String>());
+                return parse_gpt_image_2_response_payload(&retry_raw_text);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    let response = {
+        let endpoint = format!("{}/v1/images/generations", base_url);
+        let resolved_size = resolve_openai_image_size(&request.size, &request.aspect_ratio);
+        let body = json!({
+            "model": "gpt-image-2",
+            "prompt": request.prompt,
+            "n": 1,
+            "size": resolved_size
+        });
+
+        info!("[666API GPT-IMAGE-2] generate URL: {}", endpoint);
+        client
+            .post(&endpoint)
+            .bearer_auth(api_key)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?
+    };
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(AIError::Provider(format_api666_images_error(
+            status,
+            &error_text,
+            has_reference,
+        )));
+    }
+
+    let raw_text = response.text().await.unwrap_or_default();
+    info!("[GPT-IMAGE-2] response (first 500 chars): {}", &raw_text.chars().take(500).collect::<String>());
+    parse_gpt_image_2_response_payload(&raw_text)
 }
 
 /// Generate image via standard OpenAI-compatible /v1/images/generations endpoint.

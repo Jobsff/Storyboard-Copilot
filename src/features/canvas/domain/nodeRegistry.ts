@@ -10,6 +10,7 @@ import {
   type GroupNodeData,
   type ImageEditNodeData,
   type SpineNodeData,
+  type SequenceFrameGenNodeData,
   type VideoEditNodeData,
   type StoryboardSplitNodeData,
   type StoryboardGenNodeData,
@@ -337,6 +338,40 @@ const spineNodeDefinition: CanvasNodeDefinition<SpineNodeData> = {
   }),
 };
 
+const sequenceFrameGenNodeDefinition: CanvasNodeDefinition<SequenceFrameGenNodeData> = {
+  type: CANVAS_NODE_TYPES.sequenceFrameGen,
+  menuLabelKey: 'node.menu.sequenceFrameGen',
+  menuIcon: 'wand',
+  visibleInMenu: true,
+  capabilities: {
+    toolbar: true,
+    promptInput: false,
+  },
+  connectivity: {
+    sourceHandle: true,
+    targetHandle: true,
+    connectMenu: {
+      fromSource: true,
+      fromTarget: false,
+    },
+  },
+  createDefaultData: () => ({
+    displayName: DEFAULT_NODE_DISPLAY_NAME[CANVAS_NODE_TYPES.sequenceFrameGen],
+    action: '',
+    prompt: '',
+    model: getPreferredImageModel(),
+    size: '1K' as ImageSize,
+    requestAspectRatio: '1:1',
+    gridRows: 3,
+    gridCols: 3,
+    fps: 6,
+    extraParams: {},
+    isGenerating: false,
+    generationStatus: null,
+    generatedPrompt: null,
+  }),
+};
+
 const groupNodeDefinition: CanvasNodeDefinition<GroupNodeData> = {
   type: CANVAS_NODE_TYPES.group,
   menuLabelKey: 'node.menu.storyboard',
@@ -468,6 +503,7 @@ export const canvasNodeDefinitions: Record<CanvasNodeType, CanvasNodeDefinition>
   [CANVAS_NODE_TYPES.videoEdit]: videoEditNodeDefinition,
   [CANVAS_NODE_TYPES.exportVideo]: exportVideoNodeDefinition,
   [CANVAS_NODE_TYPES.spine]: spineNodeDefinition,
+  [CANVAS_NODE_TYPES.sequenceFrameGen]: sequenceFrameGenNodeDefinition,
   [CANVAS_NODE_TYPES.textAnnotation]: textAnnotationNodeDefinition,
   [CANVAS_NODE_TYPES.group]: groupNodeDefinition,
   [CANVAS_NODE_TYPES.storyboardSplit]: storyboardSplitDefinition,

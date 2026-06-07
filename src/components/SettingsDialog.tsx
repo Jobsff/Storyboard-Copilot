@@ -36,6 +36,7 @@ interface SettingsCheckboxCardProps {
 }
 
 const PROVIDER_REGISTER_URLS: Record<string, string> = {
+  agnes: 'https://agnes-ai.com',
   ppio: 'https://ppio.com/user/register?invited_by=WGY0DZ',
   grsai: 'https://grsai.com',
   kie: 'https://kie.ai?ref=eef20ef0b0595cad227d45b29c635f6c',
@@ -43,6 +44,7 @@ const PROVIDER_REGISTER_URLS: Record<string, string> = {
 };
 
 const PROVIDER_GET_KEY_URLS: Record<string, string> = {
+  agnes: 'https://agnes-ai.com',
   ppio: 'https://ppio.com/settings/key-management',
   grsai: 'https://grsai.com/zh/dashboard/api-keys',
   kie: 'https://kie.ai/api-key',
@@ -560,6 +562,7 @@ export function SettingsDialog({
                       >
                         <option value="666api">666API</option>
                         <option value="juyouapi">{i18n.language.startsWith('zh') ? '巨游API' : 'JuyouAPI'}</option>
+                        <option value="agnes">Agnes AI</option>
                         <option value="ollama">Ollama</option>
                       </UiSelect>
                     </div>
@@ -574,7 +577,9 @@ export function SettingsDialog({
                         placeholder={
                           aiAssistantProvider === 'ollama'
                             ? 'gemma4:e4b'
-                            : 'doubao-seed-2-0-mini-260215'
+                            : aiAssistantProvider === 'agnes'
+                              ? 'agnes-2.0-flash'
+                              : 'doubao-seed-2-0-mini-260215'
                         }
                         className="w-full rounded border border-border-dark bg-surface-dark px-3 py-2 text-sm text-text-dark placeholder:text-text-muted"
                       />

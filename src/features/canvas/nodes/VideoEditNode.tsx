@@ -63,7 +63,10 @@ const PICKER_Y_OFFSET_PX = 20;
 
 const VIDEO_MODEL_CHOICES: Array<{ id: string; label: string }> = [
   { id: '666api/wan2.6-i2v-flash', label: 'wan2.6-i2v-flash' },
+  { id: 'agnes/agnes-video-v2.0', label: 'Agnes Video V2.0' },
 ];
+
+const TEXT_TO_VIDEO_MODEL_IDS = new Set(['agnes/agnes-video-v2.0']);
 
 function clampNumber(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) {
@@ -218,9 +221,10 @@ export const VideoEditNode = memo(({ id, data, selected, width, height }: VideoE
   const [modelPanelAnchor, setModelPanelAnchor] = useState<{ left: number; top: number } | null>(null);
   const [paramsPanelAnchor, setParamsPanelAnchor] = useState<{ left: number; top: number } | null>(null);
 
-  const providerId = useMemo(() => (data.model.split('/', 1)[0] ?? '').trim(), [data.model]);
+  const selectedModelId = data.model || '666api/wan2.6-i2v-flash';
+  const providerId = useMemo(() => (selectedModelId.split('/', 1)[0] ?? '').trim(), [selectedModelId]);
   const providerApiKey = providerId === '666api'
-    ? (resolve666ApiKey(data.model, apiKeys) ?? '')
+    ? (resolve666ApiKey(selectedModelId, apiKeys) ?? '')
     : providerId === 'juyouapi'
       ? (apiKeys['juyouapi'] ?? '')
       : (providerId ? (apiKeys[providerId] ?? '') : '');
@@ -259,13 +263,15 @@ export const VideoEditNode = memo(({ id, data, selected, width, height }: VideoE
   }, [height]);
 
   const selectedModelLabel = useMemo(() => {
-    const hit = VIDEO_MODEL_CHOICES.find((item) => item.id === data.model);
+    const hit = VIDEO_MODEL_CHOICES.find((item) => item.id === selectedModelId);
     if (hit) {
       return hit.label;
     }
-    const [, modelName] = data.model.split('/', 2);
-    return modelName ?? data.model;
-  }, [data.model]);
+    const [, modelName] = selectedModelId.split('/', 2);
+    return modelName ?? selectedModelId;
+  }, [selectedModelId]);
+
+  const supportsTextToVideo = TEXT_TO_VIDEO_MODEL_IDS.has(selectedModelId);
 
   const paramsSummaryText = useMemo(() => {
     const ratio = typeof data.aspectRatio === 'string' && data.aspectRatio.trim() ? data.aspectRatio.trim() : '16:9';
@@ -476,7 +482,7 @@ export const VideoEditNode = memo(({ id, data, selected, width, height }: VideoE
       return;
     }
 
-    if (incomingImages.length === 0) {
+    if (!supportsTextToVideo && incomingImages.length === 0) {
       const message = t('node.videoEdit.referenceRequired');
       setError(message);
       void showErrorDialog(message, t('common.error'));
@@ -488,7 +494,7 @@ export const VideoEditNode = memo(({ id, data, selected, width, height }: VideoE
     const quality = (VIDEO_QUALITIES.includes(data.quality as VideoQuality) ? data.quality : '720p') as string;
     const aspectRatio = typeof data.aspectRatio === 'string' && data.aspectRatio.trim() ? data.aspectRatio.trim() : '16:9';
     const prompt = buildVideoPrompt(sanitizedBasePrompt, { aspectRatio, quality, durationSeconds });
-    const requestModel = data.model;
+    const requestModel = selectedModelId;
     const generationStartedAt = Date.now();
     const generationDurationMs = 120000;
     const runtimeDiagnostics = await getRuntimeDiagnostics();
@@ -564,7 +570,7 @@ export const VideoEditNode = memo(({ id, data, selected, width, height }: VideoE
       const generationDebugContext: GenerationDebugContext = {
         sourceType: 'videoEdit',
         providerId,
-        requestModel: data.model,
+        requestModel,
         requestSize: data.quality,
         requestAspectRatio: data.aspectRatio,
         prompt,
@@ -608,6 +614,8 @@ export const VideoEditNode = memo(({ id, data, selected, width, height }: VideoE
     isSubmitting,
     providerApiKey,
     providerId,
+    selectedModelId,
+    supportsTextToVideo,
     t,
     updateNodeData,
   ]);

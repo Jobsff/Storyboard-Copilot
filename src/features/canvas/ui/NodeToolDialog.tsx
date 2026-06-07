@@ -31,6 +31,7 @@ export function NodeToolDialog() {
   const addDerivedExportNode = useCanvasStore((state) => state.addDerivedExportNode);
   const addStoryboardSplitNode = useCanvasStore((state) => state.addStoryboardSplitNode);
   const addEdge = useCanvasStore((state) => state.addEdge);
+  const updateNodeData = useCanvasStore((state) => state.updateNodeData);
 
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -213,7 +214,16 @@ export function NodeToolDialog() {
     try {
       const result = await activePlugin.execute(sourceImageUrl, options, {
         processTool: (toolType, imageUrl, toolOptions) =>
-          canvasToolProcessor.process(toolType, imageUrl, toolOptions),
+          canvasToolProcessor.process(toolType, imageUrl, {
+            ...toolOptions,
+            ...(toolType === NODE_TOOL_TYPES.splitStoryboard &&
+            Number((sourceNode.data as { animationFps?: unknown }).animationFps) > 0
+              ? {
+                normalizeSequenceFrames: true,
+                removeLightBackground: true,
+              }
+              : {}),
+          }),
       });
 
       if (result.storyboardFrames && result.rows && result.cols) {
@@ -226,6 +236,13 @@ export function NodeToolDialog() {
         );
         if (createdNodeId) {
           addEdge(sourceNode.id, createdNodeId);
+          const sourceAnimationFps = Number((sourceNode.data as { animationFps?: unknown }).animationFps);
+          if (Number.isFinite(sourceAnimationFps) && sourceAnimationFps > 0) {
+            updateNodeData(createdNodeId, {
+              animationFps: sourceAnimationFps,
+              animationPreviewEnabled: true,
+            });
+          }
         }
       } else if (result.outputImageUrl) {
         const prepared = await prepareNodeImage(result.outputImageUrl);
@@ -264,6 +281,7 @@ export function NodeToolDialog() {
     closeDialog,
     resolveResultNodeTitle,
     t,
+    updateNodeData,
   ]);
 
   const widthClassName = useMemo(() => {

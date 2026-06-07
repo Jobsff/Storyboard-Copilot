@@ -15,6 +15,7 @@ export const DEFAULT_NODE_DISPLAY_NAME: Record<CanvasNodeType, string> = {
   [CANVAS_NODE_TYPES.videoEdit]: 'AI 视频',
   [CANVAS_NODE_TYPES.exportVideo]: '结果视频',
   [CANVAS_NODE_TYPES.spine]: 'Spine 动画',
+  [CANVAS_NODE_TYPES.sequenceFrameGen]: 'AI 序列帧',
   [CANVAS_NODE_TYPES.textAnnotation]: '文本注释',
   [CANVAS_NODE_TYPES.group]: '分组',
   [CANVAS_NODE_TYPES.storyboardSplit]: '切割结果',

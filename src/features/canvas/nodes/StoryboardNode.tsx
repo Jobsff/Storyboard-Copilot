@@ -14,7 +14,7 @@ import {
   useViewport,
   type NodeProps,
 } from '@xyflow/react';
-import { Download, FolderOpen, ImagePlus, SlidersHorizontal, SquareArrowOutUpRight } from 'lucide-react';
+import { Download, FolderOpen, ImagePlus, Pause, Play, SlidersHorizontal, SquareArrowOutUpRight } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { join } from '@tauri-apps/api/path';
@@ -25,6 +25,7 @@ import {
   saveImageSourceToDirectory,
   type MergeStoryboardImagesResult,
 } from '@/commands/image';
+import { exportSequenceFramesAsSpine } from '@/commands/assets';
 import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
@@ -439,6 +440,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
   const [dropTargetFrameId, setDropTargetFrameId] = useState<string | null>(null);
   const [pickerState, setPickerState] = useState<{ frameId: string; x: number; y: number } | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [isExportingSpine, setIsExportingSpine] = useState(false);
   const [isPackingSingleImages, setIsPackingSingleImages] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [isExportPanelOpen, setIsExportPanelOpen] = useState(false);
@@ -447,6 +449,10 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
   const [isPackDoneDialogOpen, setIsPackDoneDialogOpen] = useState(false);
   const [packOutputDir, setPackOutputDir] = useState<string>('');
   const [packRevealFilePath, setPackRevealFilePath] = useState<string>('');
+  const [isAnimationPlaying, setIsAnimationPlaying] = useState(() =>
+    Boolean((data as { animationPreviewEnabled?: unknown }).animationPreviewEnabled)
+  );
+  const [animationFrameIndex, setAnimationFrameIndex] = useState(0);
 
   const orderedFrames = useMemo(
     () => [...data.frames].sort((a, b) => a.order - b.order),
@@ -469,6 +475,17 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
   const gridCols = Math.max(1, data.gridCols);
   const gridRows = Math.max(1, data.gridRows);
   const totalFrames = orderedFrames.length;
+  const animationFps = useMemo(() => {
+    const rawFps = Number((data as { animationFps?: unknown }).animationFps);
+    return Number.isFinite(rawFps) && rawFps > 0 ? clamp(Math.round(rawFps), 1, 60) : 6;
+  }, [data]);
+  const activeAnimationFrame = orderedFrames[animationFrameIndex % Math.max(1, orderedFrames.length)];
+  const activeAnimationFrameSource = activeAnimationFrame
+    ? activeAnimationFrame.previewImageUrl || activeAnimationFrame.imageUrl
+    : null;
+  const activeAnimationDisplayUrl = activeAnimationFrameSource
+    ? resolveImageDisplayUrl(activeAnimationFrameSource)
+    : null;
   const resolvedNodeWidth = Math.max(STORYBOARD_NODE_WIDTH_PX, Math.round(width ?? STORYBOARD_NODE_WIDTH_PX));
   const resolvedNodeHeight = Math.max(
     STORYBOARD_NODE_MIN_HEIGHT_PX,
@@ -478,6 +495,26 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
   useEffect(() => {
     updateNodeInternals(id);
   }, [id, resolvedNodeHeight, resolvedNodeWidth, updateNodeInternals]);
+
+  useEffect(() => {
+    if (animationFrameIndex < orderedFrames.length) {
+      return;
+    }
+    setAnimationFrameIndex(0);
+  }, [animationFrameIndex, orderedFrames.length]);
+
+  useEffect(() => {
+    if (!isAnimationPlaying || orderedFrames.length <= 1) {
+      return;
+    }
+
+    const intervalMs = Math.max(16, Math.round(1000 / animationFps));
+    const timer = window.setInterval(() => {
+      setAnimationFrameIndex((previous) => (previous + 1) % orderedFrames.length);
+    }, intervalMs);
+
+    return () => window.clearInterval(timer);
+  }, [animationFps, isAnimationPlaying, orderedFrames.length]);
 
   const resolvedTitle = useMemo(
     () => resolveNodeDisplayName(CANVAS_NODE_TYPES.storyboardSplit, data),
@@ -966,6 +1003,83 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
     resolvePackRootDir,
   ]);
 
+  const handleExportSpine = useCallback(async () => {
+    if (isExportingSpine) {
+      return;
+    }
+
+    setExportError(null);
+    setIsExportingSpine(true);
+
+    try {
+      const frameSources = orderedFrames
+        .map((frame) => frame.imageUrl ?? frame.previewImageUrl ?? '')
+        .filter((source) => source.trim().length > 0);
+      if (frameSources.length === 0) {
+        throw new Error('该分镜没有可导出的序列帧');
+      }
+
+      const packageName = sanitizePathSegment(
+        resolvedTitle || currentProjectName || 'sequence_frames',
+        'sequence_frames'
+      );
+      const rootDir = await resolvePackRootDir();
+      if (!rootDir) {
+        return;
+      }
+
+      const exported = await exportSequenceFramesAsSpine({
+        packageName,
+        animations: [
+          {
+            name: 'run',
+            frameSources,
+            fps: animationFps,
+            loopAnimation: true,
+          },
+        ],
+        trimTransparent: true,
+        alphaThreshold: 8,
+        maxTextureSize: 4096,
+        targetDir: rootDir,
+      });
+
+      const jsonPath = Object.entries(exported.files).find(([name]) => name.toLowerCase().endsWith('.json'))?.[1] ?? null;
+      const atlasPath = Object.entries(exported.files).find(([name]) => name.toLowerCase().endsWith('.atlas'))?.[1] ?? null;
+      const texturePaths = Object.entries(exported.files)
+        .filter(([name]) => name.toLowerCase().endsWith('.png'))
+        .map(([, path]) => path);
+
+      if (!jsonPath || !atlasPath || texturePaths.length === 0) {
+        throw new Error('Spine 导出文件不完整');
+      }
+
+      const outputDir = await join(rootDir, packageName);
+      setPackOutputDir(outputDir);
+      setPackRevealFilePath(jsonPath);
+      setIsPackDoneDialogOpen(true);
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : error
+              ? JSON.stringify(error)
+              : '导出 Spine 失败';
+      setExportError(message);
+    } finally {
+      setIsExportingSpine(false);
+    }
+  }, [
+    animationFps,
+    currentProjectName,
+    isExportingSpine,
+    orderedFrames,
+    resolvePackRootDir,
+    resolvedTitle,
+  ]);
+
   const handleOpenPackFolder = useCallback(async () => {
     if (!packRevealFilePath && !packOutputDir) {
       return;
@@ -990,7 +1104,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
     }
   }, [packOutputDir, packRevealFilePath]);
 
-  const isAnyExporting = isExporting || isPackingSingleImages;
+  const isAnyExporting = isExporting || isPackingSingleImages || isExportingSpine;
 
   const handleTogglePicker = useCallback((frameId: string, x: number, y: number) => {
     setPickerState((previous) => {
@@ -1036,6 +1150,54 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
         editable
         onTitleChange={(nextTitle) => updateNodeData(id, { displayName: nextTitle })}
       />
+
+      {orderedFrames.length > 0 ? (
+        <div className="nodrag mb-2 rounded-xl border border-[rgba(255,255,255,0.12)] bg-bg-dark/55 p-2">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="min-w-0 text-[11px] text-text-muted">
+              序列帧预览 · {animationFps} FPS · {animationFrameIndex + 1}/{orderedFrames.length}
+            </div>
+            <UiButton
+              size="sm"
+              variant="muted"
+              className="h-7 gap-1 rounded-full px-2 text-[11px]"
+              onClick={(event) => {
+                event.stopPropagation();
+                setIsAnimationPlaying((previous) => !previous);
+              }}
+            >
+              {isAnimationPlaying ? (
+                <Pause className="h-3 w-3" />
+              ) : (
+                <Play className="h-3 w-3" />
+              )}
+              {isAnimationPlaying ? '暂停' : '播放'}
+            </UiButton>
+          </div>
+          <div
+            className="mx-auto overflow-hidden rounded-lg border border-[rgba(255,255,255,0.10)] bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.08),rgba(0,0,0,0.18))]"
+            style={{
+              width: 'min(100%, 150px)',
+              aspectRatio: frameAspectRatioCss,
+            }}
+          >
+            {activeAnimationDisplayUrl ? (
+              <CanvasNodeImage
+                src={activeAnimationDisplayUrl}
+                alt="sequence-frame-preview"
+                viewerSourceUrl={activeAnimationDisplayUrl}
+                viewerImageList={frameViewerImageList}
+                className={`h-full w-full ${exportOptions.imageFit === 'contain' ? 'object-contain' : 'object-cover'}`}
+                draggable={false}
+              />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-[11px] text-text-muted">
+                空帧
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       <div
         className="ui-scrollbar nowheel min-h-0 flex-1 overflow-auto"
@@ -1144,6 +1306,19 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
         </div>
 
         <div className="flex min-w-0 items-center gap-2">
+          <UiButton
+            size="sm"
+            variant="muted"
+            className={`nodrag ${NODE_CONTROL_PRIMARY_BUTTON_CLASS}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              void handleExportSpine();
+            }}
+            disabled={isAnyExporting}
+          >
+            <Play className={NODE_CONTROL_ICON_CLASS} />
+            {isExportingSpine ? '导出中...' : '导出 Spine'}
+          </UiButton>
           <UiButton
             size="sm"
             variant="muted"
@@ -1327,7 +1502,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
             <div className="absolute inset-0 bg-black/55" />
             <UiPanel className="relative w-[440px] p-4">
               <div className="text-sm font-medium text-text-dark">导出完成</div>
-              <div className="mt-2 text-xs text-text-muted">图片已导出到以下路径：</div>
+              <div className="mt-2 text-xs text-text-muted">文件已导出到以下路径：</div>
               <div className="mt-1 break-all rounded border border-[rgba(255,255,255,0.12)] bg-bg-dark/70 px-2 py-1.5 text-xs text-text-dark">
                 {packOutputDir}
               </div>

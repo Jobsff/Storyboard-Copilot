@@ -11,6 +11,7 @@ export const CANVAS_NODE_TYPES = {
   videoEdit: 'videoNode',
   exportVideo: 'exportVideoNode',
   spine: 'spineNode',
+  sequenceFrameGen: 'sequenceFrameGenNode',
   textAnnotation: 'textAnnotationNode',
   group: 'groupNode',
   storyboardSplit: 'storyboardNode',
@@ -155,6 +156,23 @@ export interface StoryboardGenNodeData {
   [key: string]: unknown;
 }
 
+export interface SequenceFrameGenNodeData {
+  displayName?: string;
+  action: string;
+  prompt: string;
+  model: string;
+  size: ImageSize;
+  requestAspectRatio: string;
+  gridRows: number;
+  gridCols: number;
+  fps: number;
+  extraParams?: Record<string, unknown>;
+  isGenerating?: boolean;
+  generationStatus?: string | null;
+  generatedPrompt?: string | null;
+  [key: string]: unknown;
+}
+
 export interface VideoEditNodeData extends NodeDisplayData {
   prompt: string;
   model: string;
@@ -203,7 +221,8 @@ export type CanvasNodeData =
   | ExportVideoNodeData
   | SpineNodeData
   | StoryboardSplitNodeData
-  | StoryboardGenNodeData;
+  | StoryboardGenNodeData
+  | SequenceFrameGenNodeData;
 
 export type CanvasNode = Node<CanvasNodeData, CanvasNodeType>;
 export type CanvasEdge = Edge;

@@ -38,7 +38,9 @@ export class CanvasToolProcessor implements ToolProcessor {
         Number(options.cols ?? metadata?.gridCols ?? 3),
         Number(options.lineThicknessPercent),
         Number(options.lineThickness ?? 0),
-        metadata?.frameNotes
+        metadata?.frameNotes,
+        Boolean(options.normalizeSequenceFrames),
+        Boolean(options.removeLightBackground)
       );
     }
 
@@ -244,7 +246,9 @@ export class CanvasToolProcessor implements ToolProcessor {
     cols: number,
     lineThicknessPercent: number,
     lineThicknessPxFallback: number,
-    frameNotes?: string[]
+    frameNotes?: string[],
+    normalizeSequenceFrames = false,
+    removeLightBackground = false
   ): Promise<ToolProcessorResult> {
     const normalizedRows = Number.isFinite(rows) ? rows : 3;
     const normalizedCols = Number.isFinite(cols) ? cols : 3;
@@ -282,8 +286,15 @@ export class CanvasToolProcessor implements ToolProcessor {
       outputs = await this.localSplit(sourceImage, safeRows, safeCols, safeLineThickness);
     }
 
+    const processedOutputs = normalizeSequenceFrames || removeLightBackground
+      ? await this.normalizeSequenceFrameImages(outputs, {
+        normalizePosition: normalizeSequenceFrames,
+        removeLightBackground,
+      })
+      : outputs;
+
     const persistedFrameImages = await Promise.all(
-      outputs.map(async (imageUrl) => await persistImageLocally(imageUrl))
+      processedOutputs.map(async (imageUrl) => await persistImageLocally(imageUrl))
     );
 
     let frameAspectRatio: string | undefined;
@@ -312,6 +323,304 @@ export class CanvasToolProcessor implements ToolProcessor {
       cols: safeCols,
       frameAspectRatio: resolvedFrameAspectRatio,
     };
+  }
+
+  private async normalizeSequenceFrameImages(
+    imageUrls: string[],
+    options: {
+      normalizePosition: boolean;
+      removeLightBackground: boolean;
+    }
+  ): Promise<string[]> {
+    const preparedFrames = await Promise.all(
+      imageUrls.map(async (imageUrl) => {
+        const image = await loadImageElement(imageUrl);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, image.naturalWidth || image.width);
+        canvas.height = Math.max(1, image.naturalHeight || image.height);
+        const context = canvas.getContext('2d');
+        if (!context) {
+          throw new Error('无法初始化序列帧画布');
+        }
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+        if (options.removeLightBackground) {
+          this.removeLightBackgroundPixels(imageData);
+          context.putImageData(imageData, 0, 0);
+        }
+        return {
+          canvas,
+          bounds: this.findOpaqueBounds(imageData),
+        };
+      })
+    );
+
+    if (!options.normalizePosition) {
+      return preparedFrames.map((frame) => canvasToDataUrl(frame.canvas));
+    }
+
+    return preparedFrames.map((frame) => {
+      const bounds = frame.bounds;
+      if (!bounds) {
+        return canvasToDataUrl(frame.canvas);
+      }
+
+      const output = document.createElement('canvas');
+      output.width = frame.canvas.width;
+      output.height = frame.canvas.height;
+      const context = output.getContext('2d');
+      if (!context) {
+        throw new Error('无法初始化序列帧校准画布');
+      }
+
+      const sourceWidth = bounds.maxX - bounds.minX + 1;
+      const sourceHeight = bounds.maxY - bounds.minY + 1;
+      const targetX = Math.round((output.width - sourceWidth) / 2);
+      const targetBaseline = Math.round(output.height * 0.88);
+      const targetY = Math.max(0, Math.min(output.height - sourceHeight, targetBaseline - sourceHeight));
+
+      context.drawImage(
+        frame.canvas,
+        bounds.minX,
+        bounds.minY,
+        sourceWidth,
+        sourceHeight,
+        targetX,
+        targetY,
+        sourceWidth,
+        sourceHeight
+      );
+
+      return canvasToDataUrl(output);
+    });
+  }
+
+  private removeLightBackgroundPixels(imageData: ImageData): void {
+    const { width, height, data } = imageData;
+    const pixelCount = width * height;
+    const backgroundMask = new Uint8Array(pixelCount);
+    const queue: number[] = [];
+    let cursor = 0;
+    const backgroundColor = this.estimateBorderBackgroundColor(imageData);
+
+    const enqueue = (x: number, y: number): void => {
+      if (x < 0 || x >= width || y < 0 || y >= height) {
+        return;
+      }
+      const pixelIndex = y * width + x;
+      if (backgroundMask[pixelIndex] !== 0) {
+        return;
+      }
+      const dataIndex = pixelIndex * 4;
+      if (!this.isBackgroundCandidate(data, dataIndex, backgroundColor, 232, 34, 34)) {
+        return;
+      }
+      backgroundMask[pixelIndex] = 1;
+      queue.push(pixelIndex);
+    };
+
+    for (let x = 0; x < width; x += 1) {
+      enqueue(x, 0);
+      enqueue(x, height - 1);
+    }
+    for (let y = 1; y < height - 1; y += 1) {
+      enqueue(0, y);
+      enqueue(width - 1, y);
+    }
+
+    while (cursor < queue.length) {
+      const pixelIndex = queue[cursor];
+      cursor += 1;
+      const x = pixelIndex % width;
+      const y = Math.floor(pixelIndex / width);
+      enqueue(x + 1, y);
+      enqueue(x - 1, y);
+      enqueue(x, y + 1);
+      enqueue(x, y - 1);
+    }
+
+    for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
+      if (backgroundMask[pixelIndex] === 0) {
+        continue;
+      }
+      data[pixelIndex * 4 + 3] = 0;
+    }
+
+    // Soften the white matte left by anti-aliasing without deleting internal white clothing/details.
+    const featheredAlpha = new Uint8ClampedArray(pixelCount);
+    for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
+      featheredAlpha[pixelIndex] = data[pixelIndex * 4 + 3];
+    }
+
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const pixelIndex = y * width + x;
+        if (backgroundMask[pixelIndex] !== 0) {
+          continue;
+        }
+        const dataIndex = pixelIndex * 4;
+        const alpha = data[dataIndex + 3];
+        if (alpha === 0 || !this.isBackgroundCandidate(data, dataIndex, backgroundColor, 206, 56, 58)) {
+          continue;
+        }
+
+        const touchesBackground = this.hasBackgroundNeighbor(backgroundMask, width, height, x, y, 1);
+        if (touchesBackground) {
+          featheredAlpha[pixelIndex] = Math.min(featheredAlpha[pixelIndex], Math.round(alpha * 0.35));
+          continue;
+        }
+
+        if (this.hasBackgroundNeighbor(backgroundMask, width, height, x, y, 2)) {
+          featheredAlpha[pixelIndex] = Math.min(featheredAlpha[pixelIndex], Math.round(alpha * 0.7));
+        }
+      }
+    }
+
+    for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
+      data[pixelIndex * 4 + 3] = featheredAlpha[pixelIndex];
+    }
+  }
+
+  private estimateBorderBackgroundColor(imageData: ImageData): { red: number; green: number; blue: number } | null {
+    const { width, height, data } = imageData;
+    let redTotal = 0;
+    let greenTotal = 0;
+    let blueTotal = 0;
+    let count = 0;
+
+    const sample = (x: number, y: number): void => {
+      const index = (y * width + x) * 4;
+      const alpha = data[index + 3];
+      if (alpha === 0) {
+        return;
+      }
+      const red = data[index];
+      const green = data[index + 1];
+      const blue = data[index + 2];
+      const maxChannel = Math.max(red, green, blue);
+      const minChannel = Math.min(red, green, blue);
+      const brightness = red * 0.299 + green * 0.587 + blue * 0.114;
+      if (brightness < 190 || maxChannel - minChannel > 72) {
+        return;
+      }
+      redTotal += red;
+      greenTotal += green;
+      blueTotal += blue;
+      count += 1;
+    };
+
+    for (let x = 0; x < width; x += 1) {
+      sample(x, 0);
+      sample(x, height - 1);
+    }
+    for (let y = 1; y < height - 1; y += 1) {
+      sample(0, y);
+      sample(width - 1, y);
+    }
+
+    if (count < Math.max(4, Math.floor((width + height) / 16))) {
+      return null;
+    }
+
+    return {
+      red: Math.round(redTotal / count),
+      green: Math.round(greenTotal / count),
+      blue: Math.round(blueTotal / count),
+    };
+  }
+
+  private isBackgroundCandidate(
+    data: Uint8ClampedArray,
+    index: number,
+    backgroundColor: { red: number; green: number; blue: number } | null,
+    minBrightness: number,
+    maxChannelSpread: number,
+    maxColorDistance: number
+  ): boolean {
+    const alpha = data[index + 3];
+    if (alpha === 0) {
+      return true;
+    }
+    const red = data[index];
+    const green = data[index + 1];
+    const blue = data[index + 2];
+    const maxChannel = Math.max(red, green, blue);
+    const minChannel = Math.min(red, green, blue);
+    const brightness = red * 0.299 + green * 0.587 + blue * 0.114;
+    const isLightNeutral = brightness >= minBrightness && maxChannel - minChannel <= maxChannelSpread;
+    if (isLightNeutral) {
+      return true;
+    }
+    if (!backgroundColor) {
+      return false;
+    }
+    const redDistance = red - backgroundColor.red;
+    const greenDistance = green - backgroundColor.green;
+    const blueDistance = blue - backgroundColor.blue;
+    const colorDistance = Math.sqrt(
+      redDistance * redDistance +
+      greenDistance * greenDistance +
+      blueDistance * blueDistance
+    );
+    return brightness >= 178 && colorDistance <= maxColorDistance;
+  }
+
+  private hasBackgroundNeighbor(
+    backgroundMask: Uint8Array,
+    width: number,
+    height: number,
+    x: number,
+    y: number,
+    radius: number
+  ): boolean {
+    for (let offsetY = -radius; offsetY <= radius; offsetY += 1) {
+      for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
+        if (offsetX === 0 && offsetY === 0) {
+          continue;
+        }
+        const nextX = x + offsetX;
+        const nextY = y + offsetY;
+        if (nextX < 0 || nextX >= width || nextY < 0 || nextY >= height) {
+          continue;
+        }
+        if (backgroundMask[nextY * width + nextX] !== 0) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private findOpaqueBounds(imageData: ImageData): {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  } | null {
+    const { width, height, data } = imageData;
+    let minX = width;
+    let minY = height;
+    let maxX = -1;
+    let maxY = -1;
+
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const alpha = data[(y * width + x) * 4 + 3];
+        if (alpha <= 8) {
+          continue;
+        }
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+    }
+
+    if (maxX < minX || maxY < minY) {
+      return null;
+    }
+
+    return { minX, minY, maxX, maxY };
   }
 
   private resolveMaxAllowedLineThickness(

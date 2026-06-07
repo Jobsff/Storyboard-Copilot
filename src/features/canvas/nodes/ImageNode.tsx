@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Handle,
   Position,
@@ -14,10 +14,14 @@ import {
   DEFAULT_ASPECT_RATIO,
   EXPORT_RESULT_NODE_MIN_WIDTH,
   EXPORT_RESULT_NODE_MIN_HEIGHT,
+  NODE_TOOL_TYPES,
   type CanvasNodeType,
   type ExportImageNodeData,
   type ImageEditNodeData,
 } from '@/features/canvas/domain/canvasNodes';
+import {
+  canvasToolProcessor,
+} from '@/features/canvas/application/canvasServices';
 import {
   resolveMinEdgeFittedSize,
   resolveResizeMinConstraintsByAspect,
@@ -30,6 +34,7 @@ import { resolveNodeDisplayName } from '@/features/canvas/domain/nodeDisplay';
 import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
+import { UiButton } from '@/components/ui';
 import { useCanvasStore } from '@/stores/canvasStore';
 
 type ImageNodeProps = NodeProps & {
@@ -50,9 +55,17 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
   const updateNodeInternals = useUpdateNodeInternals();
   const setSelectedNode = useCanvasStore((state) => state.setSelectedNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
+  const addStoryboardSplitNode = useCanvasStore((state) => state.addStoryboardSplitNode);
+  const addEdge = useCanvasStore((state) => state.addEdge);
   const { zoom } = useViewport();
   const [now, setNow] = useState(() => Date.now());
+  const [isSplittingStoryboard, setIsSplittingStoryboard] = useState(false);
+  const [splitError, setSplitError] = useState<string | null>(null);
   const isExportResultNode = type === CANVAS_NODE_TYPES.exportImage;
+  const isStoryboardGridOutput =
+    isExportResultNode &&
+    (data as ExportImageNodeData).resultKind === 'storyboardGenOutput' &&
+    Boolean(data.imageUrl);
   const isGenerating = typeof data.isGenerating === 'boolean' ? data.isGenerating : false;
   const generationError =
     typeof (data as { generationError?: unknown }).generationError === 'string'
@@ -141,6 +154,64 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
     return picked ? resolveImageDisplayUrl(picked) : null;
   }, [data.imageUrl, data.previewImageUrl, zoom]);
 
+  const handleConfirmSplitStoryboard = useCallback(async () => {
+    if (!data.imageUrl || isSplittingStoryboard) {
+      return;
+    }
+
+    setIsSplittingStoryboard(true);
+    setSplitError(null);
+
+    try {
+      const result = await canvasToolProcessor.process(
+        NODE_TOOL_TYPES.splitStoryboard,
+        data.imageUrl,
+        {
+          rows: 3,
+          cols: 3,
+          lineThicknessPercent: 0,
+          normalizeSequenceFrames: true,
+          removeLightBackground: true,
+        }
+      );
+      if (!result.storyboardFrames || !result.rows || !result.cols) {
+        throw new Error('切割结果为空');
+      }
+      const createdNodeId = addStoryboardSplitNode(
+        id,
+        result.rows,
+        result.cols,
+        result.storyboardFrames,
+        result.frameAspectRatio
+      );
+      if (createdNodeId) {
+        addEdge(id, createdNodeId);
+        const sourceAnimationFps = Number((data as { animationFps?: unknown }).animationFps);
+        updateNodeData(createdNodeId, {
+          displayName: t('node.sequenceFrameGen.animationResultTitle'),
+          animationFps: Number.isFinite(sourceAnimationFps) && sourceAnimationFps > 0
+            ? sourceAnimationFps
+            : 6,
+          animationPreviewEnabled: true,
+        });
+        setSelectedNode(createdNodeId);
+      }
+    } catch (error) {
+      setSplitError(error instanceof Error ? error.message : '切割失败');
+    } finally {
+      setIsSplittingStoryboard(false);
+    }
+  }, [
+    addEdge,
+    addStoryboardSplitNode,
+    data,
+    id,
+    isSplittingStoryboard,
+    setSelectedNode,
+    t,
+    updateNodeData,
+  ]);
+
   // 获取原图 URL 用于查看器
   const originalImageUrl = useMemo(() => {
     if (!data.imageUrl) return null;
@@ -215,6 +286,28 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
             />
           </div>
         )}
+
+        {isStoryboardGridOutput && !isGenerating ? (
+          <div className="absolute inset-x-2 bottom-2 z-10 flex flex-col gap-1">
+            <UiButton
+              size="sm"
+              variant="primary"
+              className="nodrag h-8 rounded-full bg-bg-dark/90 text-[12px] shadow-lg backdrop-blur hover:bg-bg-dark"
+              onClick={(event) => {
+                event.stopPropagation();
+                void handleConfirmSplitStoryboard();
+              }}
+              disabled={isSplittingStoryboard}
+            >
+              {isSplittingStoryboard ? '切割中...' : '确认切割成动画'}
+            </UiButton>
+            {splitError ? (
+              <div className="rounded bg-red-950/80 px-2 py-1 text-center text-[11px] text-red-100">
+                {splitError}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <Handle
