@@ -113,7 +113,7 @@ npm run release -- 0.2.0 "新增分镜批量裁剪工具"
 
 - AI 图片：支持文生图、图生图、Prompt 工程师和自动反推提示词。
 - AI 视频：支持图生视频与文生视频（按所选供应商/模型能力决定）。
-- AI 序列帧：根据动作关键词生成 3x3 九宫格，人工确认后切割为动画帧。
+- AI 序列帧：根据动作关键词生成 2x2 / 3x3 / 4x4 序列帧网格，审核后通过「切割动画」抽帧、抠图并生成动画帧。
 - Spine 工作流：支持导入 Spine 文件包，也支持从序列帧导出 `.json + .atlas + .png` 三件套。
 - 图片工具：支持裁剪、标注、缩放、切割、合并分镜和单帧打包下载。
 
@@ -182,4 +182,5 @@ docs/development-guides/    # 开发与扩展文档
 
 - [项目开发环境与注意事项](./docs/development-guides/project-development-setup.md)
 - [供应商与模型扩展指南](./docs/development-guides/provider-and-model-extension.md)
+- [AI 序列帧工作流](./docs/development-guides/sequence-frame-workflow.md)
 - [基础工具安装配置（Windows / macOS）](./docs/development-guides/base-tools-installation.md)

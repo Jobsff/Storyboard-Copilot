@@ -46,6 +46,7 @@
     "crop": "Crop",
     "annotate": "Annotate",
     "split": "Split",
+    "splitAnimation": "Cut Animation",
     "scale": "Scale"
   },
   "toolDialog": {
@@ -264,7 +265,7 @@
     },
     "sequenceFrameGen": {
       "assistantTitle": "Sequence Frame Assistant",
-      "assistantHint": "Enter an action keyword. I will craft a 3×3 sequence-frame prompt, generate a grid image, split it into 9 frames, and create a playable frame animation result.",
+      "assistantHint": "Enter an action keyword. I will craft a {{grid}} sequence-frame prompt, generate a grid image, split it into {{count}} frames, and create a playable frame animation result.",
       "actionLabel": "Action keyword",
       "actionPlaceholder": "Examples: run cycle, jumping attack, magic attack, hit reaction, idle breathing",
       "promptPreview": "Prompt preview",
@@ -272,11 +273,11 @@
       "generating": "Generating...",
       "apiKeyRequired": "Please configure the API key for the selected image model first",
       "generateFailed": "Sequence frame generation failed",
-      "splitFailed": "Failed to split the 3x3 grid",
+      "splitFailed": "Failed to split the sequence-frame grid",
       "gridResultTitle": "Sequence Frame Grid",
       "animationResultTitle": "Sequence Frame Animation",
       "statusCraftingPrompt": "Crafting sequence-frame prompt...",
-      "statusGeneratingImage": "Generating 3x3 grid image...",
+      "statusGeneratingImage": "Generating sequence-frame grid image...",
       "statusWaitingImage": "Waiting for image result...",
       "statusCreatingGrid": "Creating grid preview...",
       "statusDone": "Grid generated. Review it, then use Split to create the animation."

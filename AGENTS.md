@@ -189,7 +189,7 @@ npm run release -- patch --notes-file docs/releases/v0.1.12.md
   - Agnes AI：使用通用 `apiKeys['agnes']` 存储，后端 provider 默认 base URL 为 `https://apihub.agnes-ai.com`。
   - Ollama（自部署）：`ollamaBaseUrl` + `ollamaModel`（独立配置），密钥通过通用 `apiKeys[ollamaProvider.id]` 存储（可选）。
 - AI 助手功能（反推提示词 / Prompt 工程师 / AI 序列帧提示词改写）通过 `aiAssistantProvider` + `aiAssistantModel` 设置项路由，支持 666API、巨游API、Agnes AI、Ollama，模型名称由用户手动填写。
-- GPT Image 2 的“透明背景”只作为 prompt 提示，不向 OpenAI 兼容网关发送 `background=transparent` 或 `output_format=png`；透明兜底放在工具后处理链路。
+- GPT Image 2 不稳定支持真实 Alpha；AI 序列帧默认用纯色绿幕提示词，透明兜底放在「切割动画」的 chroma key / 白底后处理链路。
 - Spine 导出必须产出可被现有导入器重新导入的 `.json + .atlas + .png` 文件包，不应只创建画布预览节点。
 
 ### 8.2 新工具接入

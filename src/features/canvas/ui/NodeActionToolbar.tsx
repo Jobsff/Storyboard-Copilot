@@ -68,6 +68,10 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
   const isImageEdit = isImageEditNode(node);
   const isStoryboardGen = isStoryboardGenNode(node);
   const isStoryboardSplit = isStoryboardSplitNode(node);
+  const isSequenceFrameGridOutput =
+    isExportImageNode(node) &&
+    node.data.resultKind === 'storyboardGenOutput' &&
+    Boolean(node.data.imageUrl);
   const canCopyStoryboardText = isStoryboardGen || isStoryboardSplit;
   const tools = useMemo(() => getNodeToolPlugins(node), [node]);
   const deleteNode = useCanvasStore((state) => state.deleteNode);
@@ -189,13 +193,16 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
       return t('tool.annotate');
     }
     if (toolType === NODE_TOOL_TYPES.splitStoryboard) {
+      if (isSequenceFrameGridOutput) {
+        return t('tool.splitAnimation');
+      }
       return t('tool.split');
     }
     if (toolType === NODE_TOOL_TYPES.scale) {
       return t('tool.scale');
     }
     return '';
-  }, [t]);
+  }, [isSequenceFrameGridOutput, t]);
 
   useEffect(() => {
     if (!downloadMenu) {

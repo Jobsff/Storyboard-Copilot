@@ -74,6 +74,17 @@ export function NodeToolDialog() {
     return null;
   }, [sourceNode]);
 
+  const isSequenceFrameGridOutput = useMemo(
+    () =>
+      Boolean(
+        sourceNode &&
+        isExportImageNode(sourceNode) &&
+        sourceNode.data.resultKind === 'storyboardGenOutput' &&
+        sourceNode.data.imageUrl
+      ),
+    [sourceNode]
+  );
+
   const activePlugin = useMemo(() => {
     if (!displayToolDialog) {
       return null;
@@ -182,13 +193,16 @@ export function NodeToolDialog() {
       return t('tool.annotate');
     }
     if (toolType === NODE_TOOL_TYPES.splitStoryboard) {
+      if (isSequenceFrameGridOutput) {
+        return t('tool.splitAnimation');
+      }
       return t('tool.split');
     }
     if (toolType === NODE_TOOL_TYPES.scale) {
       return t('tool.scale');
     }
     return '';
-  }, [t]);
+  }, [isSequenceFrameGridOutput, t]);
   const resolveResultNodeTitle = useCallback((toolType: NodeToolType | undefined) => {
     if (toolType === NODE_TOOL_TYPES.crop) {
       return t('toolDialog.cropResultTitle');
@@ -214,16 +228,7 @@ export function NodeToolDialog() {
     try {
       const result = await activePlugin.execute(sourceImageUrl, options, {
         processTool: (toolType, imageUrl, toolOptions) =>
-          canvasToolProcessor.process(toolType, imageUrl, {
-            ...toolOptions,
-            ...(toolType === NODE_TOOL_TYPES.splitStoryboard &&
-            Number((sourceNode.data as { animationFps?: unknown }).animationFps) > 0
-              ? {
-                normalizeSequenceFrames: true,
-                removeLightBackground: true,
-              }
-              : {}),
-          }),
+          canvasToolProcessor.process(toolType, imageUrl, toolOptions),
       });
 
       if (result.storyboardFrames && result.rows && result.cols) {
@@ -236,10 +241,11 @@ export function NodeToolDialog() {
         );
         if (createdNodeId) {
           addEdge(sourceNode.id, createdNodeId);
-          const sourceAnimationFps = Number((sourceNode.data as { animationFps?: unknown }).animationFps);
-          if (Number.isFinite(sourceAnimationFps) && sourceAnimationFps > 0) {
+          const animationFps = Number(options.animationFps);
+          if (isSequenceFrameGridOutput && Number.isFinite(animationFps) && animationFps > 0) {
             updateNodeData(createdNodeId, {
-              animationFps: sourceAnimationFps,
+              displayName: t('node.sequenceFrameGen.animationResultTitle'),
+              animationFps,
               animationPreviewEnabled: true,
             });
           }
@@ -280,6 +286,7 @@ export function NodeToolDialog() {
     addEdge,
     closeDialog,
     resolveResultNodeTitle,
+    isSequenceFrameGridOutput,
     t,
     updateNodeData,
   ]);

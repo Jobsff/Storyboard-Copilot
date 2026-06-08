@@ -18,7 +18,6 @@ import {
 import { resolveErrorContent, showErrorDialog } from '@/features/canvas/application/errorDialog';
 import { persistImageLocally } from '@/features/canvas/application/imageData';
 import { embedStoryboardImageMetadata } from '@/commands/image';
-import { TRANSPARENT_BACKGROUND_EXTRA_PARAM_KEY } from '@/features/canvas/application/transparentBackground';
 import {
   DEFAULT_IMAGE_MODEL_ID,
   getImageModel,
@@ -46,13 +45,13 @@ type SequenceFrameGenNodeProps = NodeProps & {
 
 const NODE_WIDTH = 330;
 const NODE_MIN_HEIGHT = 420;
-const GRID_ROWS = 3;
-const GRID_COLS = 3;
-const GRID_FRAME_COUNT = GRID_ROWS * GRID_COLS;
 const IMAGE_JOB_POLL_INTERVAL_MS = 1800;
 const IMAGE_JOB_TIMEOUT_MS = 8 * 60 * 1000;
-const STRICT_TRANSPARENT_BACKGROUND_REQUIREMENT =
-  'Background must be transparent: real PNG, RGBA mode, real valid Alpha channel, background area alpha value must be 0. Do not use checkerboard, white background, gray background, fake transparent background, shadows on a solid canvas, or any painted backdrop.';
+const SUPPORTED_GRID_SIZES = [2, 3, 4] as const;
+const CHROMA_KEY_BACKGROUND_REQUIREMENT =
+  'Use a perfectly flat chroma-key background color: pure bright green #00FF00. The background must be one uniform solid color in every cell, with no gradient, no texture, no shadow, no contact shadow, no floor, no grid lines, no checkerboard, and no white/gray backdrop. Do not use green anywhere on the character, clothing, weapon, effects, outlines, highlights, or shadows.';
+
+type SequenceGridSize = (typeof SUPPORTED_GRID_SIZES)[number];
 
 function resolveProviderApiKey(providerId: string, apiKeys: Record<string, string>, modelId: string): string {
   if (providerId === '666api') {
@@ -73,23 +72,55 @@ function resolveAssistantApiKey(
   return apiKeys[providerId] || fallbackKey;
 }
 
-function buildFrameNotes(action: string): string[] {
+function resolveGridSize(data: SequenceFrameGenNodeData): SequenceGridSize {
+  const rawRows = Number(data.gridRows);
+  const rawCols = Number(data.gridCols);
+  const sameSize = rawRows === rawCols ? rawRows : 3;
+  return SUPPORTED_GRID_SIZES.includes(sameSize as SequenceGridSize)
+    ? sameSize as SequenceGridSize
+    : 3;
+}
+
+function formatGridLabel(gridSize: number): string {
+  return `${gridSize}x${gridSize}`;
+}
+
+function formatFrameCountLabel(frameCount: number): string {
+  return `${frameCount} frames`;
+}
+
+function buildFrameNotes(action: string, frameCount: number): string[] {
   const normalized = action.trim() || '角色待机循环动作';
-  const stages = resolveActionStages(normalized);
+  const stages = resolveActionStages(normalized, frameCount);
   return stages.map((stage) => `${normalized} - ${stage}`);
 }
 
-function resolveActionStages(action: string): string[] {
+function fitStagesToFrameCount(stages: string[], frameCount: number): string[] {
+  const safeFrameCount = Math.max(1, Math.floor(frameCount));
+  if (stages.length === safeFrameCount) {
+    return stages;
+  }
+  if (safeFrameCount === 1) {
+    return [stages[0] ?? 'key pose'];
+  }
+  return Array.from({ length: safeFrameCount }, (_, index) => {
+    const sourceIndex = Math.round((index * (stages.length - 1)) / (safeFrameCount - 1));
+    return stages[sourceIndex] ?? stages[stages.length - 1] ?? 'key pose';
+  });
+}
+
+function resolveActionStages(action: string, frameCount: number): string[] {
   const normalized = action.toLowerCase();
   const isWalk = /走|步行|walk|walking|left|right|向左|向右/.test(normalized);
   const isRun = /跑|奔跑|run|running|冲刺|dash/.test(normalized);
   const isJump = /跳|jump|leap/.test(normalized);
   const isAttack = /攻击|挥砍|战斗|打击|attack|slash|strike|fight|combat/.test(normalized);
   const isMagic = /魔法|施法|法术|magic|spell|cast/.test(normalized);
+  let stages: string[];
 
   if (isWalk || isRun) {
     const speed = isRun ? 'run' : 'walk';
-    return [
+    stages = [
       `${speed} contact pose, left foot forward, right foot back`,
       `${speed} down pose, body weight lowered`,
       `${speed} passing pose, rear foot passing under body`,
@@ -100,10 +131,11 @@ function resolveActionStages(action: string): string[] {
       `${speed} up pose on opposite side`,
       `${speed} loop return pose, ready to connect to frame 1`,
     ];
+    return fitStagesToFrameCount(stages, frameCount);
   }
 
   if (isJump) {
-    return [
+    stages = [
       'idle ready pose before jump',
       'deep crouch anticipation, knees bent',
       'takeoff pose, feet leaving ground',
@@ -114,10 +146,11 @@ function resolveActionStages(action: string): string[] {
       'landing squash pose, knees bent absorbing impact',
       'recovery pose returning to idle',
     ];
+    return fitStagesToFrameCount(stages, frameCount);
   }
 
   if (isMagic) {
-    return [
+    stages = [
       'ready stance, hands preparing magic',
       'anticipation pose, body twists and gathers energy',
       'charging pose, magical glow begins',
@@ -128,10 +161,11 @@ function resolveActionStages(action: string): string[] {
       'settling pose, magic fading',
       'return to ready stance',
     ];
+    return fitStagesToFrameCount(stages, frameCount);
   }
 
   if (isAttack) {
-    return [
+    stages = [
       'combat idle ready stance',
       'anticipation wind-up, body pulls back',
       'attack startup, weapon or arm begins swing',
@@ -142,9 +176,10 @@ function resolveActionStages(action: string): string[] {
       'settling back to guard',
       'return to combat idle ready stance',
     ];
+    return fitStagesToFrameCount(stages, frameCount);
   }
 
-  return [
+  stages = [
     'starting pose',
     'anticipation pose',
     'early action pose',
@@ -155,30 +190,32 @@ function resolveActionStages(action: string): string[] {
     'settling pose',
     'loop return pose',
   ];
+  return fitStagesToFrameCount(stages, frameCount);
 }
 
-function buildLocalSequencePrompt(action: string, hasReferenceImage: boolean): string {
+function buildLocalSequencePrompt(action: string, hasReferenceImage: boolean, gridSize: number): string {
   const normalizedAction = action.trim() || '角色跑动循环';
-  const stages = resolveActionStages(normalizedAction);
+  const frameCount = gridSize * gridSize;
+  const gridLabel = formatGridLabel(gridSize);
+  const stages = resolveActionStages(normalizedAction, frameCount);
   const referenceHint = hasReferenceImage
     ? 'Use the provided character reference image as the identity source. Preserve the same character identity, costume, colors, body proportions, face, hairstyle, silhouette, and art style in every cell.'
     : 'Create one consistent game character design and keep it identical in every cell.';
 
   return [
-    'Create a 3x3 nine-frame sprite animation sheet for a 2D game character animation.',
+    `Create a ${gridLabel} ${formatFrameCountLabel(frameCount)} sprite animation sheet for a 2D game character animation.`,
     referenceHint,
     `Animation action: ${normalizedAction}.`,
-    'The 9 cells must be sequential animation keyframes ordered left to right, top to bottom. Every cell must show a different pose and a clear time progression.',
-    'Do NOT repeat the same standing pose. Do NOT create nine duplicate characters. Treat each cell as one frame of the same character over time.',
+    `The ${frameCount} cells must be sequential animation keyframes ordered left to right, top to bottom. Every cell must show a different pose and a clear time progression.`,
+    `Do NOT repeat the same standing pose. Do NOT create ${frameCount} duplicate characters. Treat each cell as one frame of the same character over time.`,
     ...stages.map((stage, index) => `Frame ${index + 1}: ${stage}.`),
     'Keep one full-body character in each cell, centered, same scale, same camera angle, same lighting, same style, but with clearly different limb positions, weight shift, hair/cloth movement, and silhouette.',
     'Critical layout rule: the complete character must stay fully inside each cell with generous safe margins. No head, hair, feet, weapon, hand, or clothing may cross cell borders or be cropped.',
     'Critical anchor rule: align every frame to the same ground baseline and the same center pivot. Feet should land on a consistent invisible floor line; body center should stay near the center of each cell.',
     'Use strong animation principles: anticipation, contact, passing, impact, follow-through, recovery, and loop continuity.',
     'Use visible motion arcs or subtle ghost-free pose changes only; no text, no labels, no numbers, no speech bubbles, no UI, no watermark.',
-    STRICT_TRANSPARENT_BACKGROUND_REQUIREMENT,
-    'If the upstream model cannot produce true alpha, keep the background absolutely plain pure white with no gradients, no texture, no drop shadow, and no contact shadow so the app can extract alpha cleanly.',
-    'Ensure the grid can be cropped evenly into 9 independent frames.',
+    CHROMA_KEY_BACKGROUND_REQUIREMENT,
+    `Ensure the grid can be cropped evenly into ${frameCount} independent frames arranged as ${gridLabel}.`,
   ].join('\n');
 }
 
@@ -243,6 +280,11 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
     () => resolveImageModelResolution(selectedModel, data.size, { extraParams: data.extraParams }),
     [data.extraParams, data.size, selectedModel]
   );
+  const gridSize = resolveGridSize(data);
+  const gridRows = gridSize;
+  const gridCols = gridSize;
+  const gridFrameCount = gridSize * gridSize;
+  const gridLabel = formatGridLabel(gridSize);
   const incomingImages = useMemo(
     () => graphImageResolver.collectInputImages(id, nodes, edges),
     [edges, id, nodes]
@@ -257,7 +299,7 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
     () => resolveProviderApiKey(selectedModel.providerId, apiKeys, selectedModel.id),
     [apiKeys, selectedModel.id, selectedModel.providerId]
   );
-  const promptPreview = data.generatedPrompt || data.prompt || buildLocalSequencePrompt(actionDraft, incomingImages.length > 0);
+  const promptPreview = data.generatedPrompt || data.prompt || buildLocalSequencePrompt(actionDraft, incomingImages.length > 0, gridSize);
 
   useEffect(() => {
     const externalAction = data.action ?? '';
@@ -310,9 +352,21 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
     [id, setLastUsedImageModel, updateNodeData]
   );
 
+  const updateGridSize = useCallback(
+    (nextGridSize: SequenceGridSize) => {
+      updateNodeData(id, {
+        gridRows: nextGridSize,
+        gridCols: nextGridSize,
+        generatedPrompt: null,
+        prompt: '',
+      });
+    },
+    [id, updateNodeData]
+  );
+
   const craftSequencePrompt = useCallback(async (): Promise<string> => {
     const currentAction = actionDraftRef.current;
-    const localPrompt = buildLocalSequencePrompt(currentAction, incomingImages.length > 0);
+    const localPrompt = buildLocalSequencePrompt(currentAction, incomingImages.length > 0, gridSize);
     const provider = aiAssistantProvider || selectedModel.providerId;
     const assistantKey = resolveAssistantApiKey(
       provider,
@@ -325,14 +379,14 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
     }
 
     const userInput = [
-      '请把下面的动画需求改写成适合 AI 生图模型的一张 3x3 九宫格序列帧提示词。',
+      `请把下面的动画需求改写成适合 AI 生图模型的一张 ${gridLabel} 序列帧网格提示词。`,
       '要求：角色一致、动作连续、从左到右从上到下阅读、无文字无编号、每格可等分裁切、适合 2D 游戏角色动画/Spine 序列帧使用。',
       '强制要求：每一格角色完整身体必须在格子正中间，脚底在同一条隐形地面基线，头发/脚/武器/衣服不能越出格子边界。每格姿态必须不同，不能复制同一个站姿。',
-      `背景强制要求：${STRICT_TRANSPARENT_BACKGROUND_REQUIREMENT}`,
-      '如果模型无法生成真实 Alpha，则必须使用绝对纯白、无纹理、无渐变、无阴影、无接触投影的空背景，方便后处理抠成透明。',
+      `背景强制要求：${CHROMA_KEY_BACKGROUND_REQUIREMENT}`,
+      '不要要求透明背景。请使用纯绿色 #00FF00 抠图背景，因为当前图片模型可能无法生成真实 Alpha 通道。',
       incomingImages.length > 0 ? '用户会提供角色参考图，请强调严格保持参考图角色身份、服装、比例、画风。' : '如果没有参考图，请要求创建并保持同一个角色设计。',
       `动作关键词：${currentAction.trim() || '角色跑动循环'}`,
-      `帧数：${GRID_FRAME_COUNT}，布局：${GRID_ROWS}x${GRID_COLS}，FPS：${data.fps || 6}`,
+      `帧数：${gridFrameCount}，布局：${gridLabel}`,
       '输出只要最终英文提示词，不要解释。',
     ].join('\n');
 
@@ -351,8 +405,8 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
         'STRICT SEQUENCE REQUIREMENTS:',
         localPrompt,
         '',
-        'STRICT TRANSPARENCY REQUIREMENTS:',
-        STRICT_TRANSPARENT_BACKGROUND_REQUIREMENT,
+        'STRICT CHROMA KEY BACKGROUND REQUIREMENTS:',
+        CHROMA_KEY_BACKGROUND_REQUIREMENT,
       ].join('\n');
     } catch {
       return localPrompt;
@@ -361,7 +415,9 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
     aiAssistantModel,
     aiAssistantProvider,
     apiKeys,
-    data.fps,
+    gridFrameCount,
+    gridLabel,
+    gridSize,
     incomingImages.length,
     modelApiKey,
     selectedModel.providerId,
@@ -403,7 +459,6 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
         referenceImages: incomingImages,
         extraParams: {
           ...(data.extraParams ?? {}),
-          [TRANSPARENT_BACKGROUND_EXTRA_PARAM_KEY]: true,
         },
       });
       updateNodeData(id, {
@@ -411,10 +466,10 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
       });
       const imageSource = await waitForGeneratedImage(jobId);
       const persistedGridImage = await persistImageLocally(imageSource);
-      const frameNotes = buildFrameNotes(currentAction);
+      const frameNotes = buildFrameNotes(currentAction, gridFrameCount);
       const gridImageWithMetadata = await embedStoryboardImageMetadata(persistedGridImage, {
-        gridRows: GRID_ROWS,
-        gridCols: GRID_COLS,
+        gridRows,
+        gridCols,
         frameNotes,
       }).catch(() => persistedGridImage);
 
@@ -435,10 +490,9 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
       if (gridNodeId) {
         addEdge(id, gridNodeId);
         updateNodeData(gridNodeId, {
-          animationFps: data.fps || 6,
           generationStoryboardMetadata: {
-            gridRows: GRID_ROWS,
-            gridCols: GRID_COLS,
+            gridRows,
+            gridCols,
             frameNotes,
           },
         });
@@ -464,7 +518,9 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
     commitActionDraft,
     craftSequencePrompt,
     data.extraParams,
-    data.fps,
+    gridCols,
+    gridFrameCount,
+    gridRows,
     id,
     incomingImages,
     modelApiKey,
@@ -497,14 +553,17 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
       <Handle type="target" position={Position.Left} id="target" />
       <Handle type="source" position={Position.Right} id="source" />
 
-      <div className="nodrag flex flex-1 flex-col gap-3 p-4 pt-10">
+      <div className="flex flex-1 flex-col gap-3 p-4 pt-10">
         <div className="rounded-2xl border border-amber-300/25 bg-[linear-gradient(135deg,rgba(245,158,11,0.16),rgba(20,184,166,0.10))] p-3">
           <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-text-dark">
             <Sparkles className="h-3.5 w-3.5 text-amber-300" />
             {t('node.sequenceFrameGen.assistantTitle')}
           </div>
           <div className="text-[11px] leading-relaxed text-text-muted">
-            {t('node.sequenceFrameGen.assistantHint')}
+            {t('node.sequenceFrameGen.assistantHint', {
+              grid: gridLabel,
+              count: gridFrameCount,
+            })}
           </div>
         </div>
 
@@ -517,11 +576,11 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
             onMouseDown={(event) => event.stopPropagation()}
             onWheelCapture={(event) => event.stopPropagation()}
             placeholder={t('node.sequenceFrameGen.actionPlaceholder')}
-            className="ui-scrollbar nowheel h-20 resize-none rounded-2xl border border-[rgba(255,255,255,0.12)] bg-bg-dark/70 px-3 py-2 text-sm text-text-dark outline-none transition focus:border-accent"
+            className="ui-scrollbar nodrag nowheel h-20 resize-none rounded-2xl border border-[rgba(255,255,255,0.12)] bg-bg-dark/70 px-3 py-2 text-sm text-text-dark outline-none transition focus:border-accent"
           />
         </label>
 
-        <div className="flex items-center gap-2">
+        <div className="nodrag flex flex-wrap items-center gap-2">
           <span className={NODE_CONTROL_MODEL_CHIP_CLASS}>
             <UiSelect
               value={selectedModel.id}
@@ -537,6 +596,19 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
           </span>
           <span className={NODE_CONTROL_CHIP_CLASS}>
             <UiSelect
+              value={String(gridSize)}
+              onChange={(event) => updateGridSize(Number(event.target.value) as SequenceGridSize)}
+              className="h-7 border-0 bg-transparent px-1 text-[11px]"
+            >
+              {SUPPORTED_GRID_SIZES.map((size) => (
+                <option key={size} value={size}>
+                  {formatGridLabel(size)}
+                </option>
+              ))}
+            </UiSelect>
+          </span>
+          <span className={NODE_CONTROL_CHIP_CLASS}>
+            <UiSelect
               value={selectedResolution.value}
               onChange={(event) => updateNodeData(id, { size: event.target.value as ImageSize })}
               className="h-7 border-0 bg-transparent px-1 text-[11px]"
@@ -544,19 +616,6 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
               {resolutionOptions.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
-                </option>
-              ))}
-            </UiSelect>
-          </span>
-          <span className={NODE_CONTROL_CHIP_CLASS}>
-            <UiSelect
-              value={String(data.fps || 6)}
-              onChange={(event) => updateNodeData(id, { fps: Number(event.target.value) })}
-              className="h-7 border-0 bg-transparent px-1 text-[11px]"
-            >
-              {[4, 6, 8, 10, 12, 15, 24].map((fps) => (
-                <option key={fps} value={fps}>
-                  {fps} FPS
                 </option>
               ))}
             </UiSelect>
@@ -579,7 +638,7 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
 
         <UiButton
           type="button"
-          className={`${NODE_CONTROL_PRIMARY_BUTTON_CLASS} h-9 w-full justify-center gap-2 rounded-2xl`}
+          className={`nodrag ${NODE_CONTROL_PRIMARY_BUTTON_CLASS} h-9 w-full justify-center gap-2 rounded-2xl`}
           onClick={(event) => {
             event.stopPropagation();
             void handleGenerate();

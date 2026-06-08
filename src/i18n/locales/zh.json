@@ -46,6 +46,7 @@
     "crop": "裁剪",
     "annotate": "标注",
     "split": "切割",
+    "splitAnimation": "切割动画",
     "scale": "缩放"
   },
   "toolDialog": {
@@ -264,7 +265,7 @@
     },
     "sequenceFrameGen": {
       "assistantTitle": "序列帧助理",
-      "assistantHint": "输入一个动作关键词，我会生成 3×3 九宫格序列帧提示词、生图、自动切成 9 帧，并创建可播放的帧动画结果。",
+      "assistantHint": "输入一个动作关键词，我会生成 {{grid}} 序列帧提示词、生图、自动切成 {{count}} 帧，并创建可播放的帧动画结果。",
       "actionLabel": "动作关键词",
       "actionPlaceholder": "例如：跑动循环、跳跃攻击、魔法攻击、受击倒地、待机呼吸",
       "promptPreview": "提示词预览",
@@ -272,14 +273,14 @@
       "generating": "生成中...",
       "apiKeyRequired": "请先在设置中配置当前图片模型的 API Key",
       "generateFailed": "序列帧生成失败",
-      "splitFailed": "九宫格切割失败",
-      "gridResultTitle": "序列帧九宫格",
+      "splitFailed": "序列帧网格切割失败",
+      "gridResultTitle": "序列帧网格",
       "animationResultTitle": "序列帧动画",
       "statusCraftingPrompt": "正在生成序列帧提示词...",
-      "statusGeneratingImage": "正在生成九宫格图片...",
+      "statusGeneratingImage": "正在生成序列帧网格图片...",
       "statusWaitingImage": "正在等待图片结果...",
-      "statusCreatingGrid": "正在创建九宫格预览...",
-      "statusDone": "九宫格已生成，请确认后使用切割工具生成动画"
+      "statusCreatingGrid": "正在创建序列帧网格预览...",
+      "statusDone": "序列帧网格已生成，请确认后使用切割工具生成动画"
     },
     "textAnnotation": {
       "placeholder": "输入 Markdown 文本，取消选中后会渲染预览",

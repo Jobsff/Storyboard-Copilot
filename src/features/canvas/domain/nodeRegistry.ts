@@ -364,7 +364,6 @@ const sequenceFrameGenNodeDefinition: CanvasNodeDefinition<SequenceFrameGenNodeD
     requestAspectRatio: '1:1',
     gridRows: 3,
     gridCols: 3,
-    fps: 6,
     extraParams: {},
     isGenerating: false,
     generationStatus: null,

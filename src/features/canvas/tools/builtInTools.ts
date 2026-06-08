@@ -64,11 +64,20 @@ export const splitStoryboardToolPlugin: CanvasToolPlugin = {
   icon: 'split',
   editor: 'split',
   supportsNode: (node) => supportsImageSourceNode(node) && Boolean(node.data.imageUrl),
-  createInitialOptions: () => ({
-    rows: 3,
-    cols: 3,
-    lineThicknessPercent: 0.5,
-  }),
+  createInitialOptions: (node) => {
+    const isSequenceFrameGridOutput =
+      isExportImageNode(node) && node.data.resultKind === 'storyboardGenOutput';
+    return {
+      rows: 3,
+      cols: 3,
+      lineThicknessPercent: isSequenceFrameGridOutput ? 0 : 0.5,
+      selectedFrameIndices: '',
+      sequenceAnimationMode: isSequenceFrameGridOutput,
+      transparentBackgroundMode: isSequenceFrameGridOutput ? 'auto' : 'none',
+      normalizeSequenceFrames: isSequenceFrameGridOutput,
+      animationFps: 6,
+    };
+  },
   fields: [],
   execute: async (sourceImageUrl, options, context) =>
     await context.processTool(NODE_TOOL_TYPES.splitStoryboard, sourceImageUrl, options),

@@ -329,16 +329,13 @@ const FrameCard = memo(
 
     return (
       <div
-        onPointerEnter={(event) => {
-          event.stopPropagation();
+        onPointerEnter={() => {
           onSortHover(frame.id);
         }}
-        onPointerMove={(event) => {
-          event.stopPropagation();
+        onPointerMove={() => {
           onSortHover(frame.id);
         }}
-        onMouseDown={(event) => event.stopPropagation()}
-        className={`nodrag relative bg-bg-dark/85 transition-colors ${dragging
+        className={`relative bg-bg-dark/85 transition-colors ${dragging
           ? 'z-10 opacity-55 ring-1 ring-accent/65'
           : asDropTarget
             ? 'z-10 ring-1 ring-emerald-400/70'
@@ -346,7 +343,7 @@ const FrameCard = memo(
           }`}
       >
         <div
-          className={`group/frame relative overflow-hidden bg-surface-dark ${dragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+          className={`nodrag group/frame relative overflow-hidden bg-surface-dark ${dragging ? 'cursor-grabbing' : 'cursor-grab'}`}
           style={{ aspectRatio: frameAspectRatioCss }}
           onPointerDown={(event) => {
             if (event.button !== 0) {
@@ -1152,7 +1149,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
       />
 
       {orderedFrames.length > 0 ? (
-        <div className="nodrag mb-2 rounded-xl border border-[rgba(255,255,255,0.12)] bg-bg-dark/55 p-2">
+        <div className="mb-2 rounded-xl border border-[rgba(255,255,255,0.12)] bg-bg-dark/55 p-2">
           <div className="mb-2 flex items-center justify-between gap-2">
             <div className="min-w-0 text-[11px] text-text-muted">
               序列帧预览 · {animationFps} FPS · {animationFrameIndex + 1}/{orderedFrames.length}
@@ -1160,7 +1157,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
             <UiButton
               size="sm"
               variant="muted"
-              className="h-7 gap-1 rounded-full px-2 text-[11px]"
+              className="nodrag h-7 gap-1 rounded-full px-2 text-[11px]"
               onClick={(event) => {
                 event.stopPropagation();
                 setIsAnimationPlaying((previous) => !previous);

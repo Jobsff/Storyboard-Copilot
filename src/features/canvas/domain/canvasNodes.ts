@@ -165,7 +165,7 @@ export interface SequenceFrameGenNodeData {
   requestAspectRatio: string;
   gridRows: number;
   gridCols: number;
-  fps: number;
+  fps?: number;
   extraParams?: Record<string, unknown>;
   isGenerating?: boolean;
   generationStatus?: string | null;

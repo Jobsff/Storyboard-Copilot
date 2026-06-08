@@ -10,6 +10,12 @@ const DEFAULT_LINE_THICKNESS_PERCENT = 0.5;
 const MAX_LINE_THICKNESS_PERCENT = 20;
 const LEGACY_DEFAULT_LINE_THICKNESS_PX = 6;
 const PREVIEW_VIEWPORT_HEIGHT = 'h-[min(560px,60vh)]';
+const FPS_OPTIONS = [4, 6, 8, 10, 12, 15, 24];
+const TRANSPARENT_BACKGROUND_MODES = [
+  { value: 'auto', label: '自动：已有 Alpha 不处理，否则识别绿幕/白底' },
+  { value: 'none', label: '不处理：保留原背景' },
+  { value: 'remove', label: '强制抠图：绿幕/白底都处理' },
+] as const;
 
 interface OverlayRect {
   x: number;
@@ -183,6 +189,27 @@ function formatPercent(value: number): string {
   return `${Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}%`;
 }
 
+function parseSelectedFrameIndices(value: unknown, frameCount: number): Set<number> {
+  const all = new Set(Array.from({ length: frameCount }, (_value, index) => index));
+  if (typeof value !== 'string' || !value.trim()) {
+    return all;
+  }
+
+  const selected = new Set<number>();
+  for (const item of value.split(',')) {
+    const index = Number(item.trim());
+    if (Number.isInteger(index) && index >= 0 && index < frameCount) {
+      selected.add(index);
+    }
+  }
+
+  return selected.size > 0 ? selected : all;
+}
+
+function serializeSelectedFrameIndices(selected: Set<number>): string {
+  return Array.from(selected).sort((a, b) => a - b).join(',');
+}
+
 interface NumberStepperProps {
   label: string;
   value: number;
@@ -239,6 +266,23 @@ export function SplitStoryboardToolEditor({ sourceImageUrl, options, onOptionsCh
 
   const rows = clampInteger(toFiniteNumber(options.rows, 3), MIN_GRID_SIZE, MAX_GRID_SIZE);
   const cols = clampInteger(toFiniteNumber(options.cols, 3), MIN_GRID_SIZE, MAX_GRID_SIZE);
+  const frameCount = rows * cols;
+  const isSequenceAnimationMode = options.sequenceAnimationMode === true;
+  const selectedFrameIndexes = useMemo(
+    () => parseSelectedFrameIndices(options.selectedFrameIndices, frameCount),
+    [frameCount, options.selectedFrameIndices]
+  );
+  const selectedFrameCount = selectedFrameIndexes.size;
+  const transparentBackgroundMode = typeof options.transparentBackgroundMode === 'string'
+    ? options.transparentBackgroundMode
+    : 'auto';
+  const normalizeSequenceFrames = options.normalizeSequenceFrames !== false;
+  const animationFps = clampInteger(
+    toFiniteNumber(options.animationFps, 6),
+    1,
+    60,
+    6
+  );
 
   const legacyLineThicknessPx = Math.max(0, toFiniteNumber(options.lineThickness, LEGACY_DEFAULT_LINE_THICKNESS_PX));
   const maxLineThicknessPercent = useMemo(() => {
@@ -305,7 +349,15 @@ export function SplitStoryboardToolEditor({ sourceImageUrl, options, onOptionsCh
   }, [cols, lineThicknessPx, naturalSize, rows]);
 
   const updateOptions = useCallback(
-    (patch: Partial<Record<'rows' | 'cols' | 'lineThicknessPercent', number>>) => {
+    (patch: Partial<{
+      rows: number;
+      cols: number;
+      lineThicknessPercent: number;
+      selectedFrameIndices: string;
+      transparentBackgroundMode: string;
+      normalizeSequenceFrames: boolean;
+      animationFps: number;
+    }>) => {
       const nextRows = clampInteger(
         patch.rows ?? rows,
         MIN_GRID_SIZE,
@@ -337,16 +389,71 @@ export function SplitStoryboardToolEditor({ sourceImageUrl, options, onOptionsCh
         0,
         nextMaxLineThicknessPercent
       );
+      const gridChanged = patch.rows !== undefined || patch.cols !== undefined;
 
       onOptionsChange({
         ...options,
         rows: nextRows,
         cols: nextCols,
         lineThicknessPercent: nextLineThicknessPercent,
+        ...(patch.selectedFrameIndices !== undefined || gridChanged
+          ? {
+            selectedFrameIndices: patch.selectedFrameIndices ??
+              serializeSelectedFrameIndices(
+                new Set(Array.from({ length: nextRows * nextCols }, (_value, index) => index))
+              ),
+          }
+          : {}),
+        ...(patch.transparentBackgroundMode !== undefined
+          ? { transparentBackgroundMode: patch.transparentBackgroundMode }
+          : {}),
+        ...(patch.normalizeSequenceFrames !== undefined
+          ? { normalizeSequenceFrames: patch.normalizeSequenceFrames }
+          : {}),
+        ...(patch.animationFps !== undefined
+          ? { animationFps: patch.animationFps }
+          : {}),
       });
     },
     [cols, lineThicknessPercent, naturalSize, onOptionsChange, options, rows]
   );
+
+  const toggleFrameSelection = useCallback(
+    (frameIndex: number) => {
+      const nextSelected = new Set(selectedFrameIndexes);
+      if (nextSelected.has(frameIndex)) {
+        if (nextSelected.size <= 1) {
+          return;
+        }
+        nextSelected.delete(frameIndex);
+      } else {
+        nextSelected.add(frameIndex);
+      }
+      updateOptions({ selectedFrameIndices: serializeSelectedFrameIndices(nextSelected) });
+    },
+    [selectedFrameIndexes, updateOptions]
+  );
+
+  const selectAllFrames = useCallback(() => {
+    updateOptions({
+      selectedFrameIndices: serializeSelectedFrameIndices(
+        new Set(Array.from({ length: frameCount }, (_value, index) => index))
+      ),
+    });
+  }, [frameCount, updateOptions]);
+
+  const invertFrameSelection = useCallback(() => {
+    const nextSelected = new Set<number>();
+    for (let index = 0; index < frameCount; index += 1) {
+      if (!selectedFrameIndexes.has(index)) {
+        nextSelected.add(index);
+      }
+    }
+    if (nextSelected.size === 0) {
+      return;
+    }
+    updateOptions({ selectedFrameIndices: serializeSelectedFrameIndices(nextSelected) });
+  }, [frameCount, selectedFrameIndexes, updateOptions]);
 
   const hasLayoutError = Boolean(naturalSize && !layout);
 
@@ -469,8 +576,10 @@ export function SplitStoryboardToolEditor({ sourceImageUrl, options, onOptionsCh
 
         <div className="rounded-lg border border-[rgba(255,255,255,0.12)] bg-bg-dark/80 px-3 py-2 text-xs text-text-muted">
           <div className="flex items-center justify-between">
-            <span>输出小格数量</span>
-            <span className="font-medium text-text-dark">{rows * cols}</span>
+            <span>{isSequenceAnimationMode ? '输出动画帧数' : '输出小格数量'}</span>
+            <span className="font-medium text-text-dark">
+              {isSequenceAnimationMode ? `${selectedFrameCount} / ${frameCount}` : frameCount}
+            </span>
           </div>
           {layout && (
             <>
@@ -485,6 +594,98 @@ export function SplitStoryboardToolEditor({ sourceImageUrl, options, onOptionsCh
             </>
           )}
         </div>
+
+        {isSequenceAnimationMode ? (
+          <>
+            <div className="space-y-2">
+              <div className="text-xs text-text-muted">透明背景处理</div>
+              <select
+                value={transparentBackgroundMode}
+                onChange={(event) => updateOptions({ transparentBackgroundMode: event.target.value })}
+                className="h-9 w-full rounded-lg border border-[rgba(255,255,255,0.14)] bg-bg-dark/60 px-2 text-xs text-text-dark outline-none transition focus:border-accent"
+              >
+                {TRANSPARENT_BACKGROUND_MODES.map((mode) => (
+                  <option key={mode.value} value={mode.value}>
+                    {mode.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-[rgba(255,255,255,0.12)] bg-bg-dark/70 px-3 py-2 text-xs text-text-muted">
+              <span>角色居中与基线校准</span>
+              <input
+                type="checkbox"
+                checked={normalizeSequenceFrames}
+                onChange={(event) => updateOptions({ normalizeSequenceFrames: event.target.checked })}
+                className="h-4 w-4 accent-sky-400"
+              />
+            </label>
+
+            <div className="space-y-2">
+              <div className="text-xs text-text-muted">动画 FPS</div>
+              <select
+                value={String(animationFps)}
+                onChange={(event) => updateOptions({ animationFps: Number(event.target.value) })}
+                className="h-9 w-full rounded-lg border border-[rgba(255,255,255,0.14)] bg-bg-dark/60 px-2 text-xs text-text-dark outline-none transition focus:border-accent"
+              >
+                {FPS_OPTIONS.map((fps) => (
+                  <option key={fps} value={fps}>
+                    {fps} FPS
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-sm font-medium text-text-dark">抽帧</div>
+                  <div className="text-[11px] text-text-muted">点亮的格子会进入动画</div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    className="rounded-full border border-[rgba(255,255,255,0.14)] px-2 py-1 text-[11px] text-text-muted transition hover:bg-white/10 hover:text-text-dark"
+                    onClick={selectAllFrames}
+                  >
+                    全选
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-full border border-[rgba(255,255,255,0.14)] px-2 py-1 text-[11px] text-text-muted transition hover:bg-white/10 hover:text-text-dark"
+                    onClick={invertFrameSelection}
+                  >
+                    反选
+                  </button>
+                </div>
+              </div>
+              <div
+                className="grid gap-1.5 rounded-lg border border-[rgba(255,255,255,0.12)] bg-bg-dark/70 p-2"
+                style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+              >
+                {Array.from({ length: frameCount }, (_value, index) => {
+                  const selected = selectedFrameIndexes.has(index);
+                  return (
+                    <button
+                      key={index}
+                      type="button"
+                      onClick={() => toggleFrameSelection(index)}
+                      className={`h-8 rounded-md border text-xs font-semibold transition ${
+                        selected
+                          ? 'border-sky-300/70 bg-sky-400/20 text-sky-100'
+                          : 'border-[rgba(255,255,255,0.1)] bg-black/20 text-text-muted/60'
+                      }`}
+                      title={`第 ${index + 1} 帧`}
+                    >
+                      {index + 1}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        ) : null}
 
         {hasLayoutError && (
           <div className="rounded-lg border border-red-400/35 bg-red-500/10 px-3 py-2 text-xs text-red-300">

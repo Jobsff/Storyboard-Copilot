@@ -32,6 +32,10 @@ export class CanvasToolProcessor implements ToolProcessor {
   ): Promise<ToolProcessorResult> {
     if (toolType === NODE_TOOL_TYPES.splitStoryboard) {
       const metadata = await this.readStoryboardMetadata(sourceImageUrl);
+      const transparentBackgroundMode = String(
+        options.transparentBackgroundMode ??
+        (options.removeLightBackground ? 'remove' : 'auto')
+      );
       return await this.splitStoryboard(
         sourceImageUrl,
         Number(options.rows ?? metadata?.gridRows ?? 3),
@@ -40,7 +44,8 @@ export class CanvasToolProcessor implements ToolProcessor {
         Number(options.lineThickness ?? 0),
         metadata?.frameNotes,
         Boolean(options.normalizeSequenceFrames),
-        Boolean(options.removeLightBackground)
+        transparentBackgroundMode,
+        String(options.selectedFrameIndices ?? '')
       );
     }
 
@@ -248,7 +253,8 @@ export class CanvasToolProcessor implements ToolProcessor {
     lineThicknessPxFallback: number,
     frameNotes?: string[],
     normalizeSequenceFrames = false,
-    removeLightBackground = false
+    transparentBackgroundMode = 'auto',
+    selectedFrameIndices = ''
   ): Promise<ToolProcessorResult> {
     const normalizedRows = Number.isFinite(rows) ? rows : 3;
     const normalizedCols = Number.isFinite(cols) ? cols : 3;
@@ -286,12 +292,23 @@ export class CanvasToolProcessor implements ToolProcessor {
       outputs = await this.localSplit(sourceImage, safeRows, safeCols, safeLineThickness);
     }
 
-    const processedOutputs = normalizeSequenceFrames || removeLightBackground
+    const selectedIndexes = this.resolveSelectedFrameIndexes(
+      selectedFrameIndices,
+      outputs.length
+    );
+    const selectedOutputs = selectedIndexes.map((index) => outputs[index]).filter(Boolean);
+    const selectedFrameNotes = selectedIndexes.map((index) =>
+      typeof frameNotes?.[index] === 'string' ? frameNotes[index].trim() : ''
+    );
+    const shouldProcessFrames =
+      normalizeSequenceFrames || transparentBackgroundMode === 'auto' || transparentBackgroundMode === 'remove';
+    const processedOutputs = shouldProcessFrames
       ? await this.normalizeSequenceFrameImages(outputs, {
         normalizePosition: normalizeSequenceFrames,
-        removeLightBackground,
+        transparentBackgroundMode,
+        selectedIndexes,
       })
-      : outputs;
+      : selectedOutputs;
 
     const persistedFrameImages = await Promise.all(
       processedOutputs.map(async (imageUrl) => await persistImageLocally(imageUrl))
@@ -313,14 +330,16 @@ export class CanvasToolProcessor implements ToolProcessor {
       imageUrl,
       previewImageUrl: imageUrl,
       aspectRatio: resolvedFrameAspectRatio,
-      note: typeof frameNotes?.[index] === 'string' ? frameNotes[index].trim() : '',
+      note: selectedFrameNotes[index] ?? '',
       order: index,
     }));
+    const displayCols = Math.max(1, Math.min(safeCols, frames.length || 1));
+    const displayRows = Math.max(1, Math.ceil((frames.length || 1) / displayCols));
 
     return {
       storyboardFrames: frames,
-      rows: safeRows,
-      cols: safeCols,
+      rows: displayRows,
+      cols: displayCols,
       frameAspectRatio: resolvedFrameAspectRatio,
     };
   }
@@ -329,11 +348,15 @@ export class CanvasToolProcessor implements ToolProcessor {
     imageUrls: string[],
     options: {
       normalizePosition: boolean;
-      removeLightBackground: boolean;
+      transparentBackgroundMode: string;
+      selectedIndexes: number[];
     }
   ): Promise<string[]> {
+    const selectedImageUrls = options.selectedIndexes
+      .map((index) => imageUrls[index])
+      .filter(Boolean);
     const preparedFrames = await Promise.all(
-      imageUrls.map(async (imageUrl) => {
+      selectedImageUrls.map(async (imageUrl) => {
         const image = await loadImageElement(imageUrl);
         const canvas = document.createElement('canvas');
         canvas.width = Math.max(1, image.naturalWidth || image.width);
@@ -344,8 +367,8 @@ export class CanvasToolProcessor implements ToolProcessor {
         }
         context.drawImage(image, 0, 0, canvas.width, canvas.height);
         const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-        if (options.removeLightBackground) {
-          this.removeLightBackgroundPixels(imageData);
+        if (this.shouldRemoveBackground(imageData, options.transparentBackgroundMode)) {
+          this.removeGeneratedBackgroundPixels(imageData);
           context.putImageData(imageData, 0, 0);
         }
         return {
@@ -393,6 +416,308 @@ export class CanvasToolProcessor implements ToolProcessor {
 
       return canvasToDataUrl(output);
     });
+  }
+
+  private resolveSelectedFrameIndexes(selectedFrameIndices: string, frameCount: number): number[] {
+    const allIndexes = Array.from({ length: frameCount }, (_value, index) => index);
+    const trimmed = selectedFrameIndices.trim();
+    if (!trimmed) {
+      return allIndexes;
+    }
+
+    const selected = trimmed
+      .split(',')
+      .map((item) => Number(item.trim()))
+      .filter((index) => Number.isInteger(index) && index >= 0 && index < frameCount);
+    const unique = Array.from(new Set(selected));
+    return unique.length > 0 ? unique : allIndexes;
+  }
+
+  private shouldRemoveBackground(imageData: ImageData, transparentBackgroundMode: string): boolean {
+    if (transparentBackgroundMode === 'none') {
+      return false;
+    }
+    if (transparentBackgroundMode === 'remove') {
+      return true;
+    }
+    return !this.hasRealAlpha(imageData);
+  }
+
+  private hasRealAlpha(imageData: ImageData): boolean {
+    const { data } = imageData;
+    for (let index = 3; index < data.length; index += 4) {
+      if (data[index] < 248) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private removeGeneratedBackgroundPixels(imageData: ImageData): void {
+    const backgroundColor = this.estimateDominantBorderBackgroundColor(imageData);
+    if (backgroundColor && this.isChromaKeyColor(backgroundColor)) {
+      this.removeChromaKeyBackgroundPixels(imageData, backgroundColor);
+      return;
+    }
+    this.removeLightBackgroundPixels(imageData);
+  }
+
+  private estimateDominantBorderBackgroundColor(
+    imageData: ImageData
+  ): { red: number; green: number; blue: number } | null {
+    const { width, height, data } = imageData;
+    const buckets = new Map<string, { count: number; red: number; green: number; blue: number }>();
+    const sample = (x: number, y: number): void => {
+      const index = (y * width + x) * 4;
+      if (data[index + 3] === 0) {
+        return;
+      }
+      const red = data[index];
+      const green = data[index + 1];
+      const blue = data[index + 2];
+      const key = `${red >> 4},${green >> 4},${blue >> 4}`;
+      const bucket = buckets.get(key) ?? { count: 0, red: 0, green: 0, blue: 0 };
+      bucket.count += 1;
+      bucket.red += red;
+      bucket.green += green;
+      bucket.blue += blue;
+      buckets.set(key, bucket);
+    };
+
+    for (let x = 0; x < width; x += 1) {
+      sample(x, 0);
+      sample(x, height - 1);
+    }
+    for (let y = 1; y < height - 1; y += 1) {
+      sample(0, y);
+      sample(width - 1, y);
+    }
+
+    let best: { count: number; red: number; green: number; blue: number } | null = null;
+    for (const bucket of buckets.values()) {
+      if (!best || bucket.count > best.count) {
+        best = bucket;
+      }
+    }
+    if (!best || best.count < Math.max(8, Math.floor((width + height) / 32))) {
+      return null;
+    }
+
+    return {
+      red: Math.round(best.red / best.count),
+      green: Math.round(best.green / best.count),
+      blue: Math.round(best.blue / best.count),
+    };
+  }
+
+  private isChromaKeyColor(color: { red: number; green: number; blue: number }): boolean {
+    const maxChannel = Math.max(color.red, color.green, color.blue);
+    const minChannel = Math.min(color.red, color.green, color.blue);
+    const saturation = maxChannel - minChannel;
+    const brightness = color.red * 0.299 + color.green * 0.587 + color.blue * 0.114;
+    return maxChannel >= 160 && saturation >= 90 && brightness >= 70;
+  }
+
+  private removeChromaKeyBackgroundPixels(
+    imageData: ImageData,
+    backgroundColor: { red: number; green: number; blue: number }
+  ): void {
+    const { width, height, data } = imageData;
+    const pixelCount = width * height;
+    const backgroundMask = new Uint8Array(pixelCount);
+    const nearDistance = 48;
+    const farDistance = 132;
+
+    for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
+      const dataIndex = pixelIndex * 4;
+      const alpha = data[dataIndex + 3];
+      if (alpha === 0) {
+        backgroundMask[pixelIndex] = 1;
+        continue;
+      }
+      const distance = this.colorDistanceToBackground(data, dataIndex, backgroundColor);
+      const dominance = this.resolveChromaDominance(data, dataIndex, backgroundColor);
+      if (distance <= nearDistance || dominance >= 0.68) {
+        data[dataIndex + 3] = 0;
+        backgroundMask[pixelIndex] = 1;
+      }
+    }
+
+    // Feather and de-spill edge pixels to avoid green/magenta halos.
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const pixelIndex = y * width + x;
+        const dataIndex = pixelIndex * 4;
+        const alpha = data[dataIndex + 3];
+        if (alpha === 0) {
+          continue;
+        }
+
+        const distance = this.colorDistanceToBackground(data, dataIndex, backgroundColor);
+        const touchesBackground = this.hasBackgroundNeighbor(backgroundMask, width, height, x, y, 1);
+        const chromaDominance = this.resolveChromaDominance(data, dataIndex, backgroundColor);
+        if (!touchesBackground && distance > farDistance && chromaDominance < 0.16) {
+          continue;
+        }
+
+        const distanceAlpha = Math.max(0, Math.min(1, (distance - nearDistance) / (farDistance - nearDistance)));
+        const edgeAlpha = touchesBackground ? 0.82 : 0.94;
+        const dominanceAlpha = chromaDominance >= 0.16
+          ? Math.max(0.18, 1 - chromaDominance * 1.35)
+          : 1;
+        const nextAlpha = Math.round(alpha * Math.max(0.08, Math.min(edgeAlpha, distanceAlpha, dominanceAlpha)));
+        if (nextAlpha < alpha) {
+          data[dataIndex + 3] = nextAlpha;
+        }
+        this.removeChromaSpill(data, dataIndex, backgroundColor, touchesBackground || chromaDominance >= 0.1);
+      }
+    }
+
+    this.removeChromaRimPixels(imageData, backgroundMask, backgroundColor);
+    this.removeTinyAlphaSpeckles(imageData, 12);
+  }
+
+  private colorDistanceToBackground(
+    data: Uint8ClampedArray,
+    index: number,
+    backgroundColor: { red: number; green: number; blue: number }
+  ): number {
+    const redDistance = data[index] - backgroundColor.red;
+    const greenDistance = data[index + 1] - backgroundColor.green;
+    const blueDistance = data[index + 2] - backgroundColor.blue;
+    return Math.sqrt(
+      redDistance * redDistance +
+      greenDistance * greenDistance +
+      blueDistance * blueDistance
+    );
+  }
+
+  private resolveChromaDominance(
+    data: Uint8ClampedArray,
+    index: number,
+    backgroundColor: { red: number; green: number; blue: number }
+  ): number {
+    const red = data[index];
+    const green = data[index + 1];
+    const blue = data[index + 2];
+    if (backgroundColor.green > backgroundColor.red && backgroundColor.green > backgroundColor.blue) {
+      return (green - Math.max(red, blue)) / Math.max(1, green);
+    }
+    if (backgroundColor.red > backgroundColor.green && backgroundColor.blue > backgroundColor.green) {
+      return (Math.min(red, blue) - green) / Math.max(1, Math.min(red, blue));
+    }
+    if (backgroundColor.blue > backgroundColor.red && backgroundColor.blue > backgroundColor.green) {
+      return (blue - Math.max(red, green)) / Math.max(1, blue);
+    }
+    return 0;
+  }
+
+  private removeChromaSpill(
+    data: Uint8ClampedArray,
+    index: number,
+    backgroundColor: { red: number; green: number; blue: number },
+    isEdgePixel: boolean
+  ): void {
+    if (!isEdgePixel || data[index + 3] === 0) {
+      return;
+    }
+    const red = data[index];
+    const green = data[index + 1];
+    const blue = data[index + 2];
+    if (backgroundColor.green > backgroundColor.red && backgroundColor.green > backgroundColor.blue) {
+      const neutralCeiling = Math.max(red, blue) + 8;
+      if (green > neutralCeiling) {
+        data[index + 1] = Math.max(0, Math.min(255, neutralCeiling));
+      }
+      return;
+    }
+    if (backgroundColor.red > backgroundColor.green && backgroundColor.blue > backgroundColor.green) {
+      const neutralCeiling = green + 10;
+      if (red > neutralCeiling) {
+        data[index] = Math.max(0, Math.min(255, neutralCeiling));
+      }
+      if (blue > neutralCeiling) {
+        data[index + 2] = Math.max(0, Math.min(255, neutralCeiling));
+      }
+      return;
+    }
+    if (backgroundColor.blue > backgroundColor.red && backgroundColor.blue > backgroundColor.green) {
+      const neutralCeiling = Math.max(red, green) + 8;
+      if (blue > neutralCeiling) {
+        data[index + 2] = Math.max(0, Math.min(255, neutralCeiling));
+      }
+    }
+  }
+
+  private removeChromaRimPixels(
+    imageData: ImageData,
+    backgroundMask: Uint8Array,
+    backgroundColor: { red: number; green: number; blue: number }
+  ): void {
+    const { width, height, data } = imageData;
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const pixelIndex = y * width + x;
+        const dataIndex = pixelIndex * 4;
+        if (data[dataIndex + 3] === 0) {
+          continue;
+        }
+        const touchesBackground = this.hasBackgroundNeighbor(backgroundMask, width, height, x, y, 2);
+        if (!touchesBackground) {
+          continue;
+        }
+        const dominance = this.resolveChromaDominance(data, dataIndex, backgroundColor);
+        const distance = this.colorDistanceToBackground(data, dataIndex, backgroundColor);
+        if (dominance >= 0.2 || distance <= 86) {
+          data[dataIndex + 3] = Math.min(data[dataIndex + 3], Math.round(255 * 0.22));
+          this.removeChromaSpill(data, dataIndex, backgroundColor, true);
+        }
+      }
+    }
+  }
+
+  private removeTinyAlphaSpeckles(imageData: ImageData, maxComponentSize: number): void {
+    const { width, height, data } = imageData;
+    const visited = new Uint8Array(width * height);
+    const queue: number[] = [];
+
+    for (let start = 0; start < visited.length; start += 1) {
+      if (visited[start] !== 0 || data[start * 4 + 3] <= 8) {
+        continue;
+      }
+      let cursor = 0;
+      queue.length = 0;
+      queue.push(start);
+      visited[start] = 1;
+      while (cursor < queue.length) {
+        const pixelIndex = queue[cursor];
+        cursor += 1;
+        const x = pixelIndex % width;
+        const y = Math.floor(pixelIndex / width);
+        const neighbors = [pixelIndex - 1, pixelIndex + 1, pixelIndex - width, pixelIndex + width];
+        for (const nextIndex of neighbors) {
+          if (nextIndex < 0 || nextIndex >= visited.length || visited[nextIndex] !== 0) {
+            continue;
+          }
+          const nextX = nextIndex % width;
+          const nextY = Math.floor(nextIndex / width);
+          if (Math.abs(nextX - x) + Math.abs(nextY - y) !== 1) {
+            continue;
+          }
+          if (data[nextIndex * 4 + 3] <= 8) {
+            continue;
+          }
+          visited[nextIndex] = 1;
+          queue.push(nextIndex);
+        }
+      }
+      if (queue.length > maxComponentSize) {
+        continue;
+      }
+      for (const pixelIndex of queue) {
+        data[pixelIndex * 4 + 3] = 0;
+      }
+    }
   }
 
   private removeLightBackgroundPixels(imageData: ImageData): void {
