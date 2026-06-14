@@ -4,6 +4,7 @@ import { Plus, Trash2, Download, ImageIcon, Lock, Unlock, X } from 'lucide-react
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { UiButton, UiInput, UiSelect } from '@/components/ui/primitives';
+import { ImageUploadDropZone } from './ImageUploadDropZone';
 
 interface SizeOption {
   id: string;
@@ -102,7 +103,6 @@ export function ImageResizeTool() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
   const [lockAspect, setLockAspect] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const addFiles = useCallback((files: FileList | File[]) => {
@@ -126,10 +126,8 @@ export function ImageResizeTool() {
     e.target.value = '';
   }, [addFiles]);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    if (e.dataTransfer.files) addFiles(e.dataTransfer.files);
+  const handleDropFiles = useCallback((files: File[]) => {
+    addFiles(files);
   }, [addFiles]);
 
   const updateOption = useCallback((id: string, patch: Partial<SizeOption>) => {
@@ -238,13 +236,10 @@ export function ImageResizeTool() {
       <div className="flex flex-col lg:flex-row">
         {/* Left: Image list */}
         <div className="lg:w-1/2 p-5 border-b lg:border-b-0 lg:border-r border-border-dark">
-          <div
-            className={`relative flex flex-col min-h-[300px] rounded-lg border-2 border-dashed transition-colors ${
-              dragOver ? 'border-accent bg-accent/5' : 'border-border-dark bg-bg-dark/40'
-            }`}
-            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={handleDrop}
+          <ImageUploadDropZone
+            className="relative flex min-h-[300px] flex-col rounded-lg border-2 border-dashed border-border-dark bg-bg-dark/40 transition-colors"
+            activeClassName="!border-accent !bg-accent/5"
+            onFiles={handleDropFiles}
           >
             {hasImages ? (
               <div className="flex-1 p-3 space-y-2 overflow-auto ui-scrollbar">
@@ -286,7 +281,7 @@ export function ImageResizeTool() {
               </div>
             )}
             <input ref={fileInputRef} type="file" accept={ACCEPTED_FORMATS} multiple onChange={handleFileChange} className="hidden" />
-          </div>
+          </ImageUploadDropZone>
         </div>
 
         {/* Right: Size options */}

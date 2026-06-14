@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import { X, Eye, EyeOff, FolderOpen, Plus, Trash2 } from 'lucide-react';
+import { X, Eye, EyeOff, FolderOpen, Plus, Trash2, RefreshCw } from 'lucide-react';
 import { Trans, useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -16,7 +16,12 @@ import { GRSAI_NANO_BANANA_PRO_MODEL_OPTIONS } from '@/features/canvas/models/pr
 import { API666_KEY_GROUPS } from '@/features/canvas/models/providers/api666';
 import { provider as juyouapiProvider } from '@/features/canvas/models/providers/juyouapi';
 import { provider as ollamaProvider } from '@/features/canvas/models/providers/ollama';
-import { setJuyouapiBaseUrl as invokeSetJuyouapiBaseUrl, setOllamaBaseUrl as invokeSetOllamaBaseUrl, setOllamaModel as invokeSetOllamaModel } from '@/commands/ai';
+import {
+  listProviderModels,
+  setJuyouapiBaseUrl as invokeSetJuyouapiBaseUrl,
+  setOllamaBaseUrl as invokeSetOllamaBaseUrl,
+  setOllamaModel as invokeSetOllamaModel,
+} from '@/commands/ai';
 import { GRSAI_CREDIT_TIERS } from '@/features/canvas/pricing/types';
 import providerGuideMarkdown from '../../docs/settings/provider-guide.md?raw';
 import type { SettingsCategory } from '@/features/settings/settingsEvents';
@@ -50,6 +55,36 @@ const PROVIDER_GET_KEY_URLS: Record<string, string> = {
   kie: 'https://kie.ai/api-key',
   fal: 'https://fal.ai/dashboard/keys',
 };
+
+type ModelFetchStatus = '' | 'loading' | 'success' | 'error';
+
+function resolveAssistantProviderApiKey(
+  providerId: string,
+  model: string,
+  apiKeys: Record<string, string>
+): string {
+  if (providerId === '666api') {
+    const normalizedModel = model.trim().toLowerCase();
+    if (normalizedModel.startsWith('gpt-')) {
+      return apiKeys['666api_gpt'] || apiKeys['666api_default'] || '';
+    }
+    if (normalizedModel.startsWith('gemini-')) {
+      return apiKeys['666api_gemini'] || apiKeys['666api_default'] || '';
+    }
+    if (normalizedModel.startsWith('claude-')) {
+      return apiKeys['666api_claude'] || apiKeys['666api_default'] || '';
+    }
+    return (
+      apiKeys['666api_default'] ||
+      apiKeys['666api_gpt'] ||
+      apiKeys['666api_gemini'] ||
+      apiKeys['666api_claude'] ||
+      ''
+    );
+  }
+
+  return apiKeys[providerId] || '';
+}
 
 function SettingsCheckboxCard({
   title,
@@ -203,6 +238,9 @@ export function SettingsDialog({
   const [localEnableUpdateDialog, setLocalEnableUpdateDialog] = useState(enableUpdateDialog);
   const [checkUpdateStatus, setCheckUpdateStatus] = useState<'' | 'checking' | 'has-update' | 'up-to-date' | 'failed'>('');
   const [revealedApiKeys, setRevealedApiKeys] = useState<Record<string, boolean>>({});
+  const [assistantModelOptions, setAssistantModelOptions] = useState<string[]>([]);
+  const [assistantModelFetchStatus, setAssistantModelFetchStatus] = useState<ModelFetchStatus>('');
+  const [assistantModelFetchMessage, setAssistantModelFetchMessage] = useState('');
   const { shouldRender, isVisible } = useDialogTransition(isOpen, UI_DIALOG_TRANSITION_MS);
 
   useEffect(() => {
@@ -254,6 +292,9 @@ export function SettingsDialog({
     setLocalEnableUpdateDialog(enableUpdateDialog);
     setCheckUpdateStatus('');
     setRevealedApiKeys({});
+    setAssistantModelOptions([]);
+    setAssistantModelFetchStatus('');
+    setAssistantModelFetchMessage('');
     setLocalDownloadPathInput('');
   }, [
     isOpen,
@@ -403,6 +444,62 @@ export function SettingsDialog({
   const handleRemoveDownloadPath = useCallback((path: string) => {
     setLocalDownloadPresetPaths((previous) => previous.filter((value) => value !== path));
   }, []);
+
+  const handleAssistantProviderChange = useCallback(
+    (providerId: string) => {
+      setAiAssistantProvider(providerId);
+      setAssistantModelOptions([]);
+      setAssistantModelFetchStatus('');
+      setAssistantModelFetchMessage('');
+    },
+    [setAiAssistantProvider]
+  );
+
+  const handleFetchAssistantModels = useCallback(async () => {
+    const providerId = aiAssistantProvider || '666api';
+    const apiKey = resolveAssistantProviderApiKey(providerId, aiAssistantModel, localApiKeys);
+    const baseUrl =
+      providerId === 'juyouapi'
+        ? juyouapiBaseUrl
+        : providerId === 'ollama'
+          ? localOllamaBaseUrl
+          : undefined;
+
+    if (providerId !== 'ollama' && !apiKey.trim()) {
+      setAssistantModelFetchStatus('error');
+      setAssistantModelFetchMessage(
+        i18n.language.startsWith('zh')
+          ? '请先填写当前服务商的 API 密钥。'
+          : 'Please enter the API key for the selected provider first.'
+      );
+      return;
+    }
+
+    setAssistantModelFetchStatus('loading');
+    setAssistantModelFetchMessage('');
+    try {
+      const models = await listProviderModels(providerId, apiKey, baseUrl);
+      setAssistantModelOptions(models);
+      setAssistantModelFetchStatus('success');
+      setAssistantModelFetchMessage(
+        i18n.language.startsWith('zh')
+          ? `已获取 ${models.length} 个模型，可以从下方选择。`
+          : `Loaded ${models.length} models. Select one below.`
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setAssistantModelOptions([]);
+      setAssistantModelFetchStatus('error');
+      setAssistantModelFetchMessage(message);
+    }
+  }, [
+    aiAssistantModel,
+    aiAssistantProvider,
+    i18n.language,
+    juyouapiBaseUrl,
+    localApiKeys,
+    localOllamaBaseUrl,
+  ]);
 
   const handleMarkdownLinkClick = useCallback((href?: string) => {
     if (!href) {
@@ -557,7 +654,7 @@ export function SettingsDialog({
                       </div>
                       <UiSelect
                         value={aiAssistantProvider}
-                        onChange={(event) => setAiAssistantProvider(event.target.value)}
+                        onChange={(event) => handleAssistantProviderChange(event.target.value)}
                         className="h-9 text-sm"
                       >
                         <option value="666api">666API</option>
@@ -567,8 +664,27 @@ export function SettingsDialog({
                       </UiSelect>
                     </div>
                     <div>
-                      <div className="mb-1 text-xs font-medium text-text-muted">
-                        {i18n.language.startsWith('zh') ? '模型名称' : 'Model Name'}
+                      <div className="mb-1 flex items-center justify-between gap-3">
+                        <div className="text-xs font-medium text-text-muted">
+                          {i18n.language.startsWith('zh') ? '模型名称' : 'Model Name'}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleFetchAssistantModels}
+                          disabled={assistantModelFetchStatus === 'loading'}
+                          className="inline-flex h-7 items-center gap-1 rounded border border-border-dark bg-surface-dark px-2 text-xs text-text-dark transition-colors hover:bg-bg-dark disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <RefreshCw
+                            className={`h-3.5 w-3.5 ${assistantModelFetchStatus === 'loading' ? 'animate-spin' : ''}`}
+                          />
+                          {assistantModelFetchStatus === 'loading'
+                            ? i18n.language.startsWith('zh')
+                              ? '获取中'
+                              : 'Loading'
+                            : i18n.language.startsWith('zh')
+                              ? '获取模型'
+                              : 'Fetch Models'}
+                        </button>
                       </div>
                       <input
                         type="text"
@@ -583,6 +699,40 @@ export function SettingsDialog({
                         }
                         className="w-full rounded border border-border-dark bg-surface-dark px-3 py-2 text-sm text-text-dark placeholder:text-text-muted"
                       />
+                      {assistantModelOptions.length > 0 && (
+                        <div className="mt-2">
+                          <UiSelect
+                            value={assistantModelOptions.includes(aiAssistantModel) ? aiAssistantModel : ''}
+                            onChange={(event) => {
+                              const nextModel = event.target.value;
+                              if (nextModel) {
+                                setAiAssistantModel(nextModel);
+                              }
+                            }}
+                            className="h-9 text-sm"
+                          >
+                            <option value="">
+                              {i18n.language.startsWith('zh') ? '从模型列表选择...' : 'Select from model list...'}
+                            </option>
+                            {assistantModelOptions.map((model) => (
+                              <option key={model} value={model}>
+                                {model}
+                              </option>
+                            ))}
+                          </UiSelect>
+                        </div>
+                      )}
+                      {assistantModelFetchMessage && (
+                        <p
+                          className={`mt-2 text-xs ${
+                            assistantModelFetchStatus === 'error'
+                              ? 'text-red-300'
+                              : 'text-text-muted'
+                          }`}
+                        >
+                          {assistantModelFetchMessage}
+                        </p>
+                      )}
                     </div>
                   </div>
 

@@ -2,6 +2,7 @@ import {
   Children,
   forwardRef,
   isValidElement,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -62,6 +63,7 @@ interface UiModalProps {
   footer?: ReactNode;
   widthClassName?: string;
   containerClassName?: string;
+  draggable?: boolean;
 }
 
 function resolveButtonVariant(variant: ButtonVariant): string {
@@ -466,8 +468,68 @@ export function UiModal({
   footer,
   widthClassName = 'w-[460px]',
   containerClassName = '',
+  draggable = true,
 }: UiModalProps) {
   const { shouldRender, isVisible } = useDialogTransition(isOpen, UI_DIALOG_TRANSITION_MS);
+  const dragStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+
+  useEffect(() => {
+    if (isOpen) {
+      setDragOffset({ x: 0, y: 0 });
+      dragStateRef.current = null;
+    }
+  }, [isOpen]);
+
+  const handleDragStart = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!draggable || event.button !== 0) {
+        return;
+      }
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      dragStateRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        originX: dragOffset.x,
+        originY: dragOffset.y,
+      };
+    },
+    [dragOffset.x, dragOffset.y, draggable]
+  );
+
+  const handleDragMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const dragState = dragStateRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+    const maxX = Math.max(160, window.innerWidth / 2);
+    const maxY = Math.max(120, window.innerHeight / 2);
+    const nextX = dragState.originX + event.clientX - dragState.startX;
+    const nextY = dragState.originY + event.clientY - dragState.startY;
+    setDragOffset({
+      x: Math.max(-maxX, Math.min(maxX, nextX)),
+      y: Math.max(-maxY, Math.min(maxY, nextY)),
+    });
+  }, []);
+
+  const handleDragEnd = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const dragState = dragStateRef.current;
+    if (!dragState || dragState.pointerId !== event.pointerId) {
+      return;
+    }
+    dragStateRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
 
   if (!shouldRender) {
     return null;
@@ -481,10 +543,21 @@ export function UiModal({
       />
       <UiPanel
         className={`relative transition-opacity duration-200 ${isVisible ? 'opacity-100' : 'opacity-0'} ${widthClassName}`}
+        style={{ transform: `translate(${dragOffset.x}px, ${dragOffset.y}px)` }}
       >
-        <div className="flex items-center justify-between border-b border-[rgba(255,255,255,0.1)] px-4 py-3">
+        <div
+          className={`flex items-center justify-between border-b border-[rgba(255,255,255,0.1)] px-4 py-3 ${draggable ? 'cursor-move select-none' : ''}`}
+          onPointerDown={handleDragStart}
+          onPointerMove={handleDragMove}
+          onPointerUp={handleDragEnd}
+          onPointerCancel={handleDragEnd}
+        >
           <h2 className="text-sm font-medium text-text-dark">{title}</h2>
-          <UiIconButton className="h-8 w-8" onClick={onClose}>
+          <UiIconButton
+            className="h-8 w-8 cursor-pointer"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={onClose}
+          >
             <X className="h-4 w-4" />
           </UiIconButton>
         </div>

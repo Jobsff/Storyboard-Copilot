@@ -16,8 +16,11 @@ import {
   graphImageResolver,
 } from '@/features/canvas/application/canvasServices';
 import { resolveErrorContent, showErrorDialog } from '@/features/canvas/application/errorDialog';
-import { persistImageLocally } from '@/features/canvas/application/imageData';
-import { embedStoryboardImageMetadata } from '@/commands/image';
+import {
+  CURRENT_RUNTIME_SESSION_ID,
+  type GenerationDebugContext,
+  getRuntimeDiagnostics,
+} from '@/features/canvas/application/generationErrorReport';
 import {
   DEFAULT_IMAGE_MODEL_ID,
   getImageModel,
@@ -45,8 +48,6 @@ type SequenceFrameGenNodeProps = NodeProps & {
 
 const NODE_WIDTH = 330;
 const NODE_MIN_HEIGHT = 420;
-const IMAGE_JOB_POLL_INTERVAL_MS = 1800;
-const IMAGE_JOB_TIMEOUT_MS = 8 * 60 * 1000;
 const SUPPORTED_GRID_SIZES = [2, 3, 4] as const;
 const CHROMA_KEY_BACKGROUND_REQUIREMENT =
   'Use a perfectly flat chroma-key background color: pure bright green #00FF00. The background must be one uniform solid color in every cell, with no gradient, no texture, no shadow, no contact shadow, no floor, no grid lines, no checkerboard, and no white/gray backdrop. Do not use green anywhere on the character, clothing, weapon, effects, outlines, highlights, or shadows.';
@@ -217,35 +218,6 @@ function buildLocalSequencePrompt(action: string, hasReferenceImage: boolean, gr
     CHROMA_KEY_BACKGROUND_REQUIREMENT,
     `Ensure the grid can be cropped evenly into ${frameCount} independent frames arranged as ${gridLabel}.`,
   ].join('\n');
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
-  });
-}
-
-async function waitForGeneratedImage(jobId: string): Promise<string> {
-  const startedAt = Date.now();
-
-  while (Date.now() - startedAt < IMAGE_JOB_TIMEOUT_MS) {
-    const status = await canvasAiGateway.getGenerateImageJob(jobId);
-    if (status.status === 'succeeded') {
-      const result = status.result?.trim();
-      if (!result) {
-        throw new Error('图片生成任务已完成，但没有返回图片结果');
-      }
-      return result;
-    }
-
-    if (status.status === 'failed' || status.status === 'not_found') {
-      throw new Error(status.error || '图片生成任务失败');
-    }
-
-    await sleep(IMAGE_JOB_POLL_INTERVAL_MS);
-  }
-
-  throw new Error('图片生成等待超时，请稍后在供应商侧确认任务状态');
 }
 
 export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
@@ -441,6 +413,7 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
 
     try {
       const craftedPrompt = await craftSequencePrompt();
+      const runtimeDiagnostics = await getRuntimeDiagnostics();
       updateNodeData(id, {
         prompt: craftedPrompt,
         generatedPrompt: craftedPrompt,
@@ -461,46 +434,54 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
           ...(data.extraParams ?? {}),
         },
       });
-      updateNodeData(id, {
-        generationStatus: t('node.sequenceFrameGen.statusWaitingImage'),
-      });
-      const imageSource = await waitForGeneratedImage(jobId);
-      const persistedGridImage = await persistImageLocally(imageSource);
       const frameNotes = buildFrameNotes(currentAction, gridFrameCount);
-      const gridImageWithMetadata = await embedStoryboardImageMetadata(persistedGridImage, {
-        gridRows,
-        gridCols,
-        frameNotes,
-      }).catch(() => persistedGridImage);
-
-      updateNodeData(id, {
-        generationStatus: t('node.sequenceFrameGen.statusCreatingGrid'),
-      });
+      const generationDebugContext: GenerationDebugContext = {
+        sourceType: 'sequenceFrameGen',
+        providerId: selectedModel.providerId,
+        requestModel: requestResolution.requestModel,
+        requestSize: selectedResolution.value,
+        requestAspectRatio: DEFAULT_ASPECT_RATIO,
+        prompt: craftedPrompt,
+        extraParams: data.extraParams ?? {},
+        referenceImageCount: incomingImages.length,
+        appVersion: runtimeDiagnostics.appVersion,
+        osName: runtimeDiagnostics.osName,
+        osVersion: runtimeDiagnostics.osVersion,
+        osBuild: runtimeDiagnostics.osBuild,
+        userAgent: runtimeDiagnostics.userAgent,
+      };
       const gridNodeId = addDerivedExportNode(
         id,
-        gridImageWithMetadata,
+        null,
         DEFAULT_ASPECT_RATIO,
-        gridImageWithMetadata,
+        null,
         {
           defaultTitle: t('node.sequenceFrameGen.gridResultTitle'),
           resultKind: 'storyboardGenOutput',
           sizeStrategy: 'generated',
+          data: {
+            isGenerating: true,
+            generationStartedAt: Date.now(),
+            generationDurationMs: Math.max(180000, selectedModel.expectedDurationMs ?? 60000),
+            generationJobId: jobId,
+            generationSourceType: 'sequenceFrameGen',
+            generationProviderId: selectedModel.providerId,
+            generationClientSessionId: CURRENT_RUNTIME_SESSION_ID,
+            generationDebugContext,
+            generationStoryboardMetadata: {
+              gridRows,
+              gridCols,
+              frameNotes,
+            },
+          },
         }
       );
       if (gridNodeId) {
         addEdge(id, gridNodeId);
-        updateNodeData(gridNodeId, {
-          generationStoryboardMetadata: {
-            gridRows,
-            gridCols,
-            frameNotes,
-          },
-        });
       }
-
       updateNodeData(id, {
         isGenerating: false,
-        generationStatus: t('node.sequenceFrameGen.statusDone'),
+        generationStatus: t('node.sequenceFrameGen.statusWaitingImage'),
       });
       setSelectedNode(gridNodeId ?? null);
     } catch (generationError) {

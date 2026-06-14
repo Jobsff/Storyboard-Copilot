@@ -117,6 +117,9 @@
 - 节点底部控制条（模型/比例/生成/导出等）尺寸样式统一从 `src/features/canvas/ui/nodeControlStyles.ts` 引用，禁止在各节点散落硬编码一套新尺寸。
 - 节点工具条（NodeToolbar）位置、对齐、偏移统一从 `src/features/canvas/ui/nodeToolbarConfig.ts` 引用；禁止通过 `left/translate` 等绝对定位覆盖跟随逻辑。
 - 选中覆盖层 `SelectedNodeOverlay` 只承载轻量通用覆盖能力（如工具条），节点核心业务输入区应内聚到节点组件本体（例如 `ImageEditNode`）。
+- 对话框优先使用 `UiModal`；`UiModal` 默认支持标题栏拖动。新增自定义窗口必须提供明确拖动热区，交互控件需阻止拖动事件。
+- 节点内 `nodrag` 只用于输入框、按钮、下拉菜单、内部排序等真实交互控件，禁止把整块预览/结果区域标成 `nodrag` 导致节点主体无法拖动。
+- 文件拖放上传必须局部消费 `dragenter/dragover/drop` 事件并阻止冒泡；工具箱上传区优先复用 `ImageUploadDropZone`，页面外层保留文件 drop 兜底拦截，避免浏览器/Tauri 把图片打开成整页。
 - 对话框支持“打开/关闭”过渡，避免突兀闪烁。
 - 明暗主题要可读，避免高饱和蓝色抢占焦点（导航图已优化为灰黑系）。
 - 快捷键应避开输入态（`input/textarea/contentEditable`）避免误触。
@@ -190,6 +193,8 @@ npm run release -- patch --notes-file docs/releases/v0.1.12.md
   - Ollama（自部署）：`ollamaBaseUrl` + `ollamaModel`（独立配置），密钥通过通用 `apiKeys[ollamaProvider.id]` 存储（可选）。
 - AI 助手功能（反推提示词 / Prompt 工程师 / AI 序列帧提示词改写）通过 `aiAssistantProvider` + `aiAssistantModel` 设置项路由，支持 666API、巨游API、Agnes AI、Ollama，模型名称由用户手动填写。
 - GPT Image 2 不稳定支持真实 Alpha；AI 序列帧默认用纯色绿幕提示词，透明兜底放在「切割动画」的 chroma key / 白底后处理链路。
+- 付费生图请求禁止在提交阶段静默重试同一请求；502/超时/上游空结果可能已经扣费，应保留 job/task id 并优先继续轮询或让用户手动决定是否重试。
+- 异步任务轮询解析必须兼容多种结果结构（如 `url`、`image_url`、`b64_json`、`output`、`result`、`images`、`data`），避免中转站后台已完成但本地误判“无图片”。
 - Spine 导出必须产出可被现有导入器重新导入的 `.json + .atlas + .png` 文件包，不应只创建画布预览节点。
 
 ### 8.2 新工具接入

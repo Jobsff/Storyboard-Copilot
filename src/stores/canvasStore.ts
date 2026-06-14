@@ -100,15 +100,16 @@ interface CanvasState {
   ) => string | null;
   addDerivedExportNode: (
     sourceNodeId: string,
-    imageUrl: string,
+    imageUrl: string | null,
     aspectRatio: string,
-    previewImageUrl?: string,
+    previewImageUrl?: string | null,
     options?: {
       defaultTitle?: string;
       resultKind?: ExportImageNodeResultKind;
       aspectRatioStrategy?: 'provided' | 'derivedFromSource';
       sizeStrategy?: 'generated' | 'autoMinEdge' | 'matchSource';
       matchSourceNodeSize?: boolean;
+      data?: Partial<CanvasNodeData>;
     }
   ) => string | null;
   addStoryboardSplitNode: (
@@ -1008,6 +1009,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       imageUrl,
       previewImageUrl: previewImageUrl ?? null,
       aspectRatio: resolvedAspectRatio,
+      ...(options?.data ?? {}),
     };
     if (options?.defaultTitle) {
       (exportNodeData as { displayName?: string }).displayName = options.defaultTitle;

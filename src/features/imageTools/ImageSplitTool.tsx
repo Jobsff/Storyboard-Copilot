@@ -2,7 +2,8 @@ import { useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Download, ImageIcon } from 'lucide-react';
 import { UiButton, UiInput } from '@/components/ui/primitives';
-import { type SourceImage, ACCEPTED_FORMATS, canvasToDataUrl, exportImagesToDir } from './shared';
+import { type SourceImage, ACCEPTED_FORMATS, canvasToDataUrl, createSourceImage, exportImagesToDir } from './shared';
+import { ImageUploadDropZone } from './ImageUploadDropZone';
 
 function splitImageLocal(
   img: HTMLImageElement,
@@ -69,18 +70,27 @@ export function ImageSplitTool() {
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const loadImageFile = useCallback((file: File) => {
+    void createSourceImage(file).then((nextSource) => {
+      setSource(nextSource);
+      setExportSuccess(null);
+    });
+  }, []);
+
+  const handleDropFiles = useCallback((files: File[]) => {
+    const file = files[0];
+    if (file) {
+      loadImageFile(file);
+    }
+  }, [loadImageFile]);
+
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      setSource({ id: String(Date.now()), name: file.name, img });
-      setExportSuccess(null);
-    };
-    img.src = url;
+    if (file) {
+      loadImageFile(file);
+    }
     e.target.value = '';
-  }, []);
+  }, [loadImageFile]);
 
   const handleExport = useCallback(async () => {
     if (!source) return;
@@ -142,13 +152,15 @@ export function ImageSplitTool() {
               </div>
             </div>
           ) : (
-            <div
-              className="flex flex-col items-center justify-center min-h-[300px] rounded-lg border-2 border-dashed border-border-dark bg-bg-dark/40 cursor-pointer"
+            <ImageUploadDropZone
+              className="flex min-h-[300px] cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-border-dark bg-bg-dark/40 transition-colors"
+              activeClassName="!border-accent !bg-accent/5"
               onClick={() => fileInputRef.current?.click()}
+              onFiles={handleDropFiles}
             >
               <ImageIcon className="w-12 h-12 text-text-muted opacity-50 mb-3" />
               <p className="text-sm text-text-muted">{t('imageTool.dropOrClick')}</p>
-            </div>
+            </ImageUploadDropZone>
           )}
           <input ref={fileInputRef} type="file" accept={ACCEPTED_FORMATS} onChange={handleFileChange} className="hidden" />
         </div>

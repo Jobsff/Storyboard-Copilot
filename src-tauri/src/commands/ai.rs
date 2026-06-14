@@ -266,6 +266,136 @@ fn dto_from_record(record: &GenerationJobRecord) -> GenerationJobStatusDto {
     }
 }
 
+fn normalize_openai_base_url(base_url: Option<String>, fallback: &str) -> String {
+    let raw = base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(fallback)
+        .trim_end_matches('/')
+        .to_string();
+
+    if raw.ends_with("/v1") {
+        raw
+    } else {
+        format!("{}/v1", raw)
+    }
+}
+
+fn normalize_ollama_base_url(base_url: Option<String>) -> String {
+    base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("http://localhost:11434")
+        .trim_end_matches('/')
+        .trim_end_matches("/v1")
+        .to_string()
+}
+
+fn collect_remote_model_ids(value: &Value) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut models = Vec::new();
+
+    fn push_model(value: Option<&str>, seen: &mut HashSet<String>, models: &mut Vec<String>) {
+        let Some(model) = value.map(str::trim).filter(|model| !model.is_empty()) else {
+            return;
+        };
+        let model = model
+            .strip_prefix("models/")
+            .unwrap_or(model)
+            .to_string();
+        if seen.insert(model.clone()) {
+            models.push(model);
+        }
+    }
+
+    if let Some(data) = value.get("data").and_then(Value::as_array) {
+        for item in data {
+            push_model(item.get("id").and_then(Value::as_str), &mut seen, &mut models);
+        }
+    }
+
+    if let Some(data) = value.get("models").and_then(Value::as_array) {
+        for item in data {
+            push_model(
+                item.get("id")
+                    .or_else(|| item.get("name"))
+                    .or_else(|| item.get("model"))
+                    .and_then(Value::as_str),
+                &mut seen,
+                &mut models,
+            );
+        }
+    }
+
+    models.sort();
+    models
+}
+
+async fn fetch_openai_compatible_models(
+    provider: &str,
+    api_key: String,
+    base_url: Option<String>,
+) -> Result<Vec<String>, String> {
+    let fallback_base_url = match provider {
+        "666api" => "https://www.666api.ai",
+        "juyouapi" => "http://154.36.153.146:8317",
+        "agnes" => "https://apihub.agnes-ai.com",
+        _ => return Err(format!("Unsupported provider: {}", provider)),
+    };
+    let endpoint = format!("{}/models", normalize_openai_base_url(base_url, fallback_base_url));
+    let mut request = reqwest::Client::new().get(&endpoint);
+    if !api_key.trim().is_empty() {
+        request = request.bearer_auth(api_key.trim());
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("Failed to fetch models from {}: {}", provider, error))?;
+    let status = response.status();
+    let raw_text = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        let capped = raw_text.chars().take(1200).collect::<String>();
+        return Err(format!(
+            "{} model list request failed: HTTP {} {}",
+            provider, status, capped
+        ));
+    }
+
+    let value = serde_json::from_str::<Value>(&raw_text)
+        .map_err(|error| format!("Failed to parse {} model list: {}", provider, error))?;
+    let models = collect_remote_model_ids(&value);
+    if models.is_empty() {
+        return Err(format!("{} returned an empty model list", provider));
+    }
+    Ok(models)
+}
+
+async fn fetch_ollama_models(base_url: Option<String>) -> Result<Vec<String>, String> {
+    let endpoint = format!("{}/api/tags", normalize_ollama_base_url(base_url));
+    let response = reqwest::Client::new()
+        .get(&endpoint)
+        .send()
+        .await
+        .map_err(|error| format!("Failed to fetch Ollama models: {}", error))?;
+    let status = response.status();
+    let raw_text = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        let capped = raw_text.chars().take(1200).collect::<String>();
+        return Err(format!("Ollama model list request failed: HTTP {} {}", status, capped));
+    }
+
+    let value = serde_json::from_str::<Value>(&raw_text)
+        .map_err(|error| format!("Failed to parse Ollama model list: {}", error))?;
+    let models = collect_remote_model_ids(&value);
+    if models.is_empty() {
+        return Err("Ollama returned an empty model list".to_string());
+    }
+    Ok(models)
+}
+
 #[tauri::command]
 pub async fn set_api_key(provider: String, api_key: String) -> Result<(), String> {
     info!("Setting API key for provider: {}", provider);
@@ -279,6 +409,21 @@ pub async fn set_api_key(provider: String, api_key: String) -> Result<(), String
         .set_api_key(api_key)
         .await
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn list_provider_models(
+    provider: String,
+    api_key: String,
+    base_url: Option<String>,
+) -> Result<Vec<String>, String> {
+    match provider.as_str() {
+        "666api" | "juyouapi" | "agnes" => {
+            fetch_openai_compatible_models(provider.as_str(), api_key, base_url).await
+        }
+        "ollama" => fetch_ollama_models(base_url).await,
+        _ => Err(format!("Unsupported provider: {}", provider)),
+    }
 }
 
 #[tauri::command]

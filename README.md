@@ -181,6 +181,7 @@ docs/development-guides/    # 开发与扩展文档
 ## 开发文档导航
 
 - [项目开发环境与注意事项](./docs/development-guides/project-development-setup.md)
+- [AI 开发工具接手指南](./docs/development-guides/agent-handoff.md)
 - [供应商与模型扩展指南](./docs/development-guides/provider-and-model-extension.md)
 - [AI 序列帧工作流](./docs/development-guides/sequence-frame-workflow.md)
 - [基础工具安装配置（Windows / macOS）](./docs/development-guides/base-tools-installation.md)

@@ -253,6 +253,22 @@ export async function listModels(): Promise<string[]> {
   return await invoke('list_models');
 }
 
+export async function listProviderModels(
+  provider: string,
+  apiKey?: string,
+  baseUrl?: string
+): Promise<string[]> {
+  if (!isTauri()) {
+    throw new Error('当前不是 Tauri 容器环境，请使用 `npm run tauri dev` 启动');
+  }
+
+  return await invoke('list_provider_models', {
+    provider,
+    apiKey: apiKey ?? '',
+    baseUrl: baseUrl ?? null,
+  });
+}
+
 export async function reversePrompt(request: ReversePromptRequest): Promise<string> {
   const startedAt = performance.now();
   console.info('[AI] reverse_prompt request', {

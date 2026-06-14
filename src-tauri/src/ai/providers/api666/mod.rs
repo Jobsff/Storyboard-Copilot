@@ -96,45 +96,8 @@ struct Api666TaskSubmitResponse {
 
 #[derive(Debug, Deserialize)]
 struct Api666TaskSubmitItem {
-    status: Option<String>,
     #[serde(rename = "task_id")]
     task_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Api666TaskStatusResponse {
-    code: Option<i64>,
-    data: Option<Api666TaskStatusData>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Api666TaskStatusData {
-    status: Option<String>,
-    result: Option<Api666TaskResult>,
-    error: Option<String>,
-    message: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Api666TaskResult {
-    images: Option<Vec<Api666TaskImage>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Api666TaskImage {
-    url: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAiImageResponse {
-    data: Option<Vec<OpenAiImageItem>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAiImageItem {
-    #[serde(rename = "b64_json")]
-    b64_json: Option<String>,
-    url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -969,14 +932,6 @@ async fn post_gpt_image_2_edit_request(
     client.post(endpoint).bearer_auth(api_key).multipart(form).send().await.map_err(AIError::from)
 }
 
-fn should_retry_gpt_image_2_edit_with_b64(error_text: &str) -> bool {
-    let lowered = error_text.to_ascii_lowercase();
-    lowered.contains("upstream did not return image output")
-        || lowered.contains("did not return image")
-        || lowered.contains("no image")
-        || lowered.contains("image output")
-}
-
 fn parse_gpt_image_2_response_payload(raw_text: &str) -> Result<String, AIError> {
     let json_value: serde_json::Value = match serde_json::from_str(raw_text) {
         Ok(value) => value,
@@ -987,6 +942,14 @@ fn parse_gpt_image_2_response_payload(raw_text: &str) -> Result<String, AIError>
     if let Some(error) = json_value.get("error") {
         let msg = error.get("message").and_then(|m| m.as_str()).unwrap_or("unknown error");
         return Err(AIError::Provider(format!("API error: {}", msg)));
+    }
+
+    if let Some(image_source) = extract_image_source_from_value(&json_value) {
+        return Ok(image_source);
+    }
+
+    if let Some(task_id) = extract_task_id_from_value(&json_value) {
+        return Ok(task_id);
     }
 
     if json_value.get("code").is_some() {
@@ -1046,6 +1009,104 @@ fn parse_gpt_image_2_response_payload(raw_text: &str) -> Result<String, AIError>
     )))
 }
 
+fn looks_like_task_id(value: &str) -> bool {
+    let trimmed = value.trim();
+    !trimmed.is_empty()
+        && (trimmed.starts_with("task_")
+            || trimmed.starts_with("img_")
+            || trimmed.starts_with("gen_")
+            || trimmed.starts_with("chatcmpl-")
+            || trimmed.len() >= 12 && trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+}
+
+fn extract_task_id_from_value(value: &Value) -> Option<String> {
+    let candidates = [
+        value.pointer("/data/task_id"),
+        value.pointer("/data/id"),
+        value.pointer("/data/0/task_id"),
+        value.pointer("/data/0/id"),
+        value.pointer("/task_id"),
+        value.pointer("/id"),
+    ];
+    for candidate in candidates {
+        if let Some(raw) = candidate.and_then(|item| item.as_str()) {
+            let trimmed = raw.trim();
+            if looks_like_task_id(trimmed) {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn looks_like_image_url(value: &str) -> bool {
+    let trimmed = value.trim();
+    let lowered = trimmed.to_ascii_lowercase();
+    trimmed.starts_with("data:image/")
+        || ((lowered.starts_with("http://") || lowered.starts_with("https://"))
+            && (lowered.contains(".png")
+                || lowered.contains(".jpg")
+                || lowered.contains(".jpeg")
+                || lowered.contains(".webp")
+                || lowered.contains(".gif")
+                || lowered.contains("image")
+                || lowered.contains("cdn")
+                || lowered.contains("oss")
+                || lowered.contains("r2")))
+}
+
+fn maybe_base64_png(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.len() < 512 || trimmed.contains("://") || trimmed.contains(' ') {
+        return None;
+    }
+    let base64_like = trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=' || c == '-' || c == '_');
+    if base64_like {
+        Some(format!("data:image/png;base64,{}", trimmed))
+    } else {
+        None
+    }
+}
+
+fn extract_image_source_from_value(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if looks_like_image_url(trimmed) {
+                return Some(trimmed.to_string());
+            }
+            if let Some(data_url) = maybe_base64_png(trimmed) {
+                return Some(data_url);
+            }
+            None
+        }
+        Value::Array(items) => items.iter().find_map(extract_image_source_from_value),
+        Value::Object(map) => {
+            for key in [
+                "url",
+                "image_url",
+                "imageUrl",
+                "b64_json",
+                "base64",
+                "image",
+                "img",
+                "output",
+                "result",
+                "images",
+                "data",
+            ] {
+                if let Some(found) = map.get(key).and_then(extract_image_source_from_value) {
+                    return Some(found);
+                }
+            }
+            map.values().find_map(extract_image_source_from_value)
+        }
+        _ => None,
+    }
+}
+
 async fn submit_gpt_image_2_task(
     client: &Client,
     base_url: &str,
@@ -1075,32 +1136,6 @@ async fn submit_gpt_image_2_task(
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            if should_retry_gpt_image_2_edit_with_b64(&error_text) {
-                info!("[GPT-IMAGE-2] edit default response format failed, retrying with b64_json");
-                let retry_response = post_gpt_image_2_edit_request(
-                    client,
-                    &endpoint,
-                    api_key,
-                    &request.prompt,
-                    output_size,
-                    &png_bytes,
-                    Some("b64_json"),
-                )
-                .await?;
-                if !retry_response.status().is_success() {
-                    let retry_status = retry_response.status();
-                    let retry_error_text = retry_response.text().await.unwrap_or_default();
-                    return Err(AIError::Provider(format_api666_images_error(
-                        retry_status,
-                        &retry_error_text,
-                        has_reference,
-                    )));
-                }
-                let retry_raw_text = retry_response.text().await.unwrap_or_default();
-                info!("[GPT-IMAGE-2] edit retry response (first 500 chars): {}", &retry_raw_text.chars().take(500).collect::<String>());
-                return parse_gpt_image_2_response_payload(&retry_raw_text);
-            }
-
             return Err(AIError::Provider(format_api666_images_error(
                 status,
                 &error_text,
@@ -1110,35 +1145,7 @@ async fn submit_gpt_image_2_task(
 
         let raw_text = response.text().await.unwrap_or_default();
         info!("[GPT-IMAGE-2] edit response (first 500 chars): {}", &raw_text.chars().take(500).collect::<String>());
-        match parse_gpt_image_2_response_payload(&raw_text) {
-            Ok(result) => return Ok(result),
-            Err(AIError::Provider(message)) if should_retry_gpt_image_2_edit_with_b64(&message) => {
-                info!("[GPT-IMAGE-2] edit response body contained no image, retrying with b64_json");
-                let retry_response = post_gpt_image_2_edit_request(
-                    client,
-                    &endpoint,
-                    api_key,
-                    &request.prompt,
-                    output_size,
-                    &png_bytes,
-                    Some("b64_json"),
-                )
-                .await?;
-                if !retry_response.status().is_success() {
-                    let retry_status = retry_response.status();
-                    let retry_error_text = retry_response.text().await.unwrap_or_default();
-                    return Err(AIError::Provider(format_api666_images_error(
-                        retry_status,
-                        &retry_error_text,
-                        has_reference,
-                    )));
-                }
-                let retry_raw_text = retry_response.text().await.unwrap_or_default();
-                info!("[GPT-IMAGE-2] edit retry response (first 500 chars): {}", &retry_raw_text.chars().take(500).collect::<String>());
-                return parse_gpt_image_2_response_payload(&retry_raw_text);
-            }
-            Err(error) => return Err(error),
-        }
+        return parse_gpt_image_2_response_payload(&raw_text);
     }
 
     let response = {
@@ -1332,35 +1339,43 @@ async fn poll_gpt_task(
         )));
     }
 
-    let result: Api666TaskStatusResponse = response.json().await?;
-    let data = result
-        .data
-        .ok_or_else(|| AIError::Provider("Missing task status payload".to_string()))?;
+    let raw_value: Value = response.json().await?;
+    let data = raw_value
+        .get("data")
+        .cloned()
+        .ok_or_else(|| AIError::Provider(format!("Missing task status payload. raw={}", raw_value)))?;
 
-    let status = data.status.unwrap_or_default().to_ascii_lowercase();
+    let status = data
+        .get("status")
+        .or_else(|| data.get("task_status"))
+        .or_else(|| data.get("state"))
+        .or_else(|| data.get("taskStatus"))
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     if status == "completed" || status == "succeeded" || status == "success" {
-        let url = data
-            .result
-            .and_then(|result| result.images)
-            .and_then(|images| images.into_iter().next())
-            .and_then(|image| image.url)
-            .and_then(|urls| urls.into_iter().next())
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        if url.is_empty() {
+        if let Some(image_source) = extract_image_source_from_value(&data) {
+            return Ok(ProviderTaskPollResult::Succeeded(image_source));
+        }
+        if let Some(image_source) = extract_image_source_from_value(&raw_value) {
+            return Ok(ProviderTaskPollResult::Succeeded(image_source));
+        }
+        {
             return Ok(ProviderTaskPollResult::Failed(
-                "completed but missing image url".to_string(),
+                format!("completed but missing image payload. raw={}", raw_value),
             ));
         }
-        return Ok(ProviderTaskPollResult::Succeeded(url));
     }
 
     if status == "failed" || status == "error" {
         let message = data
-            .error
-            .or(data.message)
-            .unwrap_or_else(|| "task failed".to_string());
+            .get("error")
+            .or_else(|| data.get("message"))
+            .or_else(|| data.get("fail_msg"))
+            .or_else(|| data.get("failMsg"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("task failed")
+            .to_string();
         let normalized = if message.contains("get_channel_failed") {
             "gpt-image-2 通道暂不可用（666api: get_channel_failed）。请稍后重试或切换模型。"
                 .to_string()
@@ -1562,36 +1577,6 @@ fn resolve_video_quality(extra_params: &Option<std::collections::HashMap<String,
         "720p" => "720p".to_string(),
         "1080p" => "1080p".to_string(),
         _ => fallback.trim().to_ascii_lowercase(),
-    }
-}
-
-fn parse_aspect_ratio_value(aspect_ratio: &str) -> (f32, f32) {
-    let trimmed = aspect_ratio.trim();
-    let mut parts = trimmed.split(':');
-    let w = parts.next().and_then(|v| v.parse::<f32>().ok()).unwrap_or(16.0);
-    let h = parts.next().and_then(|v| v.parse::<f32>().ok()).unwrap_or(9.0);
-    if w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 {
-        (w, h)
-    } else {
-        (16.0, 9.0)
-    }
-}
-
-fn resolve_dimensions_from_quality(aspect_ratio: &str, quality: &str) -> (i64, i64) {
-    let base = match quality.trim().to_ascii_lowercase().as_str() {
-        "480p" => 480_i64,
-        "1080p" => 1080_i64,
-        _ => 720_i64,
-    };
-    let (w_ratio, h_ratio) = parse_aspect_ratio_value(aspect_ratio);
-    if w_ratio >= h_ratio {
-        let height = base;
-        let width = ((base as f32) * (w_ratio / h_ratio)).round() as i64;
-        (width.max(16), height.max(16))
-    } else {
-        let width = base;
-        let height = ((base as f32) * (h_ratio / w_ratio)).round() as i64;
-        (width.max(16), height.max(16))
     }
 }
 

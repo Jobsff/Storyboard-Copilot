@@ -191,6 +191,7 @@ pub fn run() {
             ai_commands::get_generate_video_job,
             ai_commands::generate_image,
             ai_commands::list_models,
+            ai_commands::list_provider_models,
             project_state::list_project_summaries,
             project_state::get_project_record,
             project_state::upsert_project_record,

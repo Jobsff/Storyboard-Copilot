@@ -33,10 +33,22 @@ export function ImageToolPage() {
   const { t } = useTranslation();
   const [activeTool, setActiveTool] = useState<ToolId>(null);
 
+  const preventPageFileDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    if (event.dataTransfer.types.includes('Files')) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
+
   if (activeTool) {
     const ToolComponent = TOOL_COMPONENTS[activeTool];
     return (
-      <div className="ui-scrollbar h-full w-full overflow-auto p-8">
+      <div
+        className="ui-scrollbar h-full w-full overflow-auto p-8"
+        onDragEnter={preventPageFileDrop}
+        onDragOver={preventPageFileDrop}
+        onDrop={preventPageFileDrop}
+      >
         <div className="max-w-5xl mx-auto">
           <button
             type="button"
@@ -53,7 +65,12 @@ export function ImageToolPage() {
   }
 
   return (
-    <div className="ui-scrollbar h-full w-full overflow-auto p-8">
+    <div
+      className="ui-scrollbar h-full w-full overflow-auto p-8"
+      onDragEnter={preventPageFileDrop}
+      onDragOver={preventPageFileDrop}
+      onDrop={preventPageFileDrop}
+    >
       <div className="max-w-5xl mx-auto">
         <h1 className="text-2xl font-bold text-text-dark mb-8">{t('imageTool.title')}</h1>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
