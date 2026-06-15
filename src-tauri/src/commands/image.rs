@@ -15,11 +15,9 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
-use tracing::info;
+use tracing::{info, warn};
 
 const STORYBOARD_METADATA_PNG_TEXT_KEY: &str = "StoryboardCopilotMetadata";
-const FAST_PREVIEW_BYPASS_MAX_BYTES: usize = 2_000_000;
-const FAST_PREVIEW_BYPASS_MAX_DIMENSION: u32 = 2048;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -591,18 +589,18 @@ fn prepare_node_image_from_bytes(
     let image_path = persist_image_bytes(app, bytes, extension)?;
     let persist_elapsed = persist_started.elapsed().as_millis();
     let longest_side = width.max(height);
-    let bypass_preview = longest_side <= safe_max_dimension
-        || (bytes.len() <= FAST_PREVIEW_BYPASS_MAX_BYTES
-            && longest_side <= FAST_PREVIEW_BYPASS_MAX_DIMENSION);
+    let bypass_preview = longest_side <= safe_max_dimension;
     if bypass_preview {
         info!(
-            "prepare_node_image done [{}]: bytes={}, ext={}, size={}x{}, max_preview={}, probe={}ms, decode=0ms, persist_original={}ms, resize=0ms, bypass_preview=true, total={}ms",
+            "[ImagePipeline] prepare_node_image done [{}]: bytes={}, ext={}, size={}x{}, max_preview={}, image_path={}, preview_path={}, probe={}ms, decode=0ms, persist_original={}ms, resize=0ms, bypass_preview=true, total={}ms",
             trace_tag,
             bytes.len(),
             extension,
             width,
             height,
             safe_max_dimension,
+            image_path,
+            image_path,
             probe_elapsed,
             persist_elapsed,
             started.elapsed().as_millis()
@@ -639,13 +637,15 @@ fn prepare_node_image_from_bytes(
     let resize_elapsed = resize_started.elapsed().as_millis();
 
     info!(
-        "prepare_node_image done [{}]: bytes={}, ext={}, size={}x{}, max_preview={}, probe={}ms, decode={}ms, persist_original={}ms, resize={}ms, total={}ms",
+        "[ImagePipeline] prepare_node_image done [{}]: bytes={}, ext={}, size={}x{}, max_preview={}, image_path={}, preview_path={}, probe={}ms, decode={}ms, persist_original={}ms, resize={}ms, total={}ms",
         trace_tag,
         bytes.len(),
         extension,
         width,
         height,
         safe_max_dimension,
+        image_path,
+        preview_image_path,
         probe_elapsed,
         decode_elapsed,
         persist_elapsed,
@@ -675,6 +675,7 @@ pub async fn prepare_node_image_source(
     let safe_max_dimension = max_preview_dimension.unwrap_or(512).clamp(64, 4096);
     let resolve_started = Instant::now();
     let (bytes, extension) = resolve_source_bytes(trimmed).await?;
+    let byte_len = bytes.len();
     let resolve_elapsed = resolve_started.elapsed().as_millis();
     let result = prepare_node_image_from_bytes(
         &app,
@@ -684,9 +685,14 @@ pub async fn prepare_node_image_source(
         "source",
     )?;
     info!(
-        "prepare_node_image_source resolved: bytes={}, ext={}, resolve_source={}ms, total={}ms",
-        bytes.len(),
+        "[ImagePipeline] prepare_node_image_source resolved: source_kind={}, source_len={}, bytes={}, ext={}, image_path={}, preview_path={}, aspect_ratio={}, resolve_source={}ms, total={}ms",
+        classify_image_source(trimmed),
+        trimmed.len(),
+        byte_len,
         extension,
+        result.image_path,
+        result.preview_image_path,
+        result.aspect_ratio,
         resolve_elapsed,
         started.elapsed().as_millis()
     );
@@ -719,9 +725,12 @@ pub async fn prepare_node_image_binary(
         "binary",
     )?;
     info!(
-        "prepare_node_image_binary resolved: bytes={}, ext={}, total={}ms",
+        "[ImagePipeline] prepare_node_image_binary resolved: bytes={}, ext={}, image_path={}, preview_path={}, aspect_ratio={}, total={}ms",
         bytes.len(),
         resolved_extension,
+        result.image_path,
+        result.preview_image_path,
+        result.aspect_ratio,
         started.elapsed().as_millis()
     );
     Ok(result)
@@ -1056,17 +1065,30 @@ fn resolve_images_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn persist_image_bytes(app: &AppHandle, bytes: &[u8], extension: &str) -> Result<String, String> {
+    let started = Instant::now();
     let images_dir = resolve_images_dir(app)?;
     let digest = md5::compute(bytes);
-    let filename = format!("{:x}.{}", digest, normalize_extension(extension));
+    let normalized_extension = normalize_extension(extension);
+    let filename = format!("{:x}.{}", digest, normalized_extension);
     let output_path = images_dir.join(filename);
+    let existed = output_path.exists();
 
-    if !output_path.exists() {
+    if !existed {
         std::fs::write(&output_path, bytes)
             .map_err(|e| format!("Failed to persist generated image: {}", e))?;
     }
 
-    Ok(output_path.to_string_lossy().to_string())
+    let output = output_path.to_string_lossy().to_string();
+    info!(
+        "[ImagePipeline] persist_image_bytes done: bytes={}, ext={}, output={}, existed={}, elapsed={}ms",
+        bytes.len(),
+        normalized_extension,
+        output,
+        existed,
+        started.elapsed().as_millis()
+    );
+
+    Ok(output)
 }
 
 fn normalize_extension(raw_ext: &str) -> String {
@@ -1080,6 +1102,23 @@ fn normalize_extension(raw_ext: &str) -> String {
     }
 
     ext
+}
+
+fn classify_image_source(source: &str) -> &'static str {
+    if source.starts_with("data:") {
+        "data-url"
+    } else if source.starts_with("asset://")
+        || source.starts_with("http://asset.localhost")
+        || source.starts_with("https://asset.localhost")
+    {
+        "tauri-asset"
+    } else if source.starts_with("file://") {
+        "file-url"
+    } else if source.starts_with("http://") || source.starts_with("https://") {
+        "remote-url"
+    } else {
+        "local-path"
+    }
 }
 
 fn extension_from_mime(mime: &str) -> String {
@@ -1253,28 +1292,86 @@ fn encode_png_with_storyboard_metadata(
 }
 
 async fn resolve_source_bytes(source: &str) -> Result<(Vec<u8>, String), String> {
+    let started = Instant::now();
+    let source_kind = classify_image_source(source);
     if source.starts_with("data:") {
-        return parse_data_url(source);
+        let result = parse_data_url(source);
+        match &result {
+            Ok((bytes, extension)) => info!(
+                "[ImagePipeline] resolve_source_bytes done: source_kind={}, source_len={}, bytes={}, ext={}, elapsed={}ms",
+                source_kind,
+                source.len(),
+                bytes.len(),
+                extension,
+                started.elapsed().as_millis()
+            ),
+            Err(error) => warn!(
+                "[ImagePipeline] resolve_source_bytes failed: source_kind={}, source_len={}, error={}, elapsed={}ms",
+                source_kind,
+                source.len(),
+                error,
+                started.elapsed().as_millis()
+            ),
+        }
+        return result;
     }
 
     if let Some(asset_path) = decode_tauri_asset_url_path(source) {
         let local_path = PathBuf::from(asset_path);
-        let bytes = std::fs::read(&local_path)
-            .map_err(|e| format!("Failed to read Tauri asset image source: {}", e))?;
+        let bytes = match std::fs::read(&local_path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                warn!(
+                    "[ImagePipeline] resolve_source_bytes failed: source_kind={}, source_len={}, path={}, error={}, elapsed={}ms",
+                    source_kind,
+                    source.len(),
+                    local_path.to_string_lossy(),
+                    error,
+                    started.elapsed().as_millis()
+                );
+                return Err(format!("Failed to read Tauri asset image source: {}", error));
+            }
+        };
         let ext = local_path
             .extension()
             .and_then(|item| item.to_str())
             .map(normalize_extension)
             .unwrap_or_else(|| "png".to_string());
+        info!(
+            "[ImagePipeline] resolve_source_bytes done: source_kind={}, source_len={}, path={}, bytes={}, ext={}, elapsed={}ms",
+            source_kind,
+            source.len(),
+            local_path.to_string_lossy(),
+            bytes.len(),
+            ext,
+            started.elapsed().as_millis()
+        );
         return Ok((bytes, ext));
     }
 
     if source.starts_with("http://") || source.starts_with("https://") {
-        let response = reqwest::get(source)
-            .await
-            .map_err(|e| format!("Failed to download remote image: {}", e))?;
+        let response = match reqwest::get(source).await {
+            Ok(response) => response,
+            Err(error) => {
+                warn!(
+                    "[ImagePipeline] resolve_source_bytes failed: source_kind={}, source_len={}, error={}, elapsed={}ms",
+                    source_kind,
+                    source.len(),
+                    error,
+                    started.elapsed().as_millis()
+                );
+                return Err(format!("Failed to download remote image: {}", error));
+            }
+        };
 
         if !response.status().is_success() {
+            warn!(
+                "[ImagePipeline] resolve_source_bytes failed: source_kind={}, source_len={}, status={}, elapsed={}ms",
+                source_kind,
+                source.len(),
+                response.status(),
+                started.elapsed().as_millis()
+            );
             return Err(format!(
                 "Remote image request failed with status {}",
                 response.status()
@@ -1287,41 +1384,99 @@ async fn resolve_source_bytes(source: &str) -> Result<(Vec<u8>, String), String>
             .and_then(|value| value.to_str().ok())
             .map(extension_from_mime);
 
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|e| format!("Failed to read remote image body: {}", e))?
-            .to_vec();
+        let bytes = match response.bytes().await {
+            Ok(bytes) => bytes.to_vec(),
+            Err(error) => {
+                warn!(
+                    "[ImagePipeline] resolve_source_bytes failed: source_kind={}, source_len={}, error={}, elapsed={}ms",
+                    source_kind,
+                    source.len(),
+                    error,
+                    started.elapsed().as_millis()
+                );
+                return Err(format!("Failed to read remote image body: {}", error));
+            }
+        };
 
         let ext = mime_ext
             .or_else(|| extension_from_path_like(source))
             .unwrap_or_else(|| "png".to_string());
 
+        info!(
+            "[ImagePipeline] resolve_source_bytes done: source_kind={}, source_len={}, bytes={}, ext={}, elapsed={}ms",
+            source_kind,
+            source.len(),
+            bytes.len(),
+            ext,
+            started.elapsed().as_millis()
+        );
         return Ok((bytes, ext));
     }
 
     if source.starts_with("file://") {
         let file_path = decode_file_url_path(source);
         let local_path = PathBuf::from(file_path);
-        let bytes = std::fs::read(&local_path)
-            .map_err(|e| format!("Failed to read file:// image source: {}", e))?;
+        let bytes = match std::fs::read(&local_path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                warn!(
+                    "[ImagePipeline] resolve_source_bytes failed: source_kind={}, source_len={}, path={}, error={}, elapsed={}ms",
+                    source_kind,
+                    source.len(),
+                    local_path.to_string_lossy(),
+                    error,
+                    started.elapsed().as_millis()
+                );
+                return Err(format!("Failed to read file:// image source: {}", error));
+            }
+        };
         let ext = local_path
             .extension()
             .and_then(|item| item.to_str())
             .map(normalize_extension)
             .unwrap_or_else(|| "png".to_string());
+        info!(
+            "[ImagePipeline] resolve_source_bytes done: source_kind={}, source_len={}, path={}, bytes={}, ext={}, elapsed={}ms",
+            source_kind,
+            source.len(),
+            local_path.to_string_lossy(),
+            bytes.len(),
+            ext,
+            started.elapsed().as_millis()
+        );
         return Ok((bytes, ext));
     }
 
     let local_path = PathBuf::from(source);
-    let bytes = std::fs::read(&local_path)
-        .map_err(|e| format!("Failed to read local image source: {}", e))?;
+    let bytes = match std::fs::read(&local_path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            warn!(
+                "[ImagePipeline] resolve_source_bytes failed: source_kind={}, source_len={}, path={}, error={}, elapsed={}ms",
+                source_kind,
+                source.len(),
+                local_path.to_string_lossy(),
+                error,
+                started.elapsed().as_millis()
+            );
+            return Err(format!("Failed to read local image source: {}", error));
+        }
+    };
     let ext = local_path
         .extension()
         .and_then(|item| item.to_str())
         .map(normalize_extension)
         .unwrap_or_else(|| "png".to_string());
 
+    info!(
+        "[ImagePipeline] resolve_source_bytes done: source_kind={}, source_len={}, path={}, bytes={}, ext={}, elapsed={}ms",
+        source_kind,
+        source.len(),
+        local_path.to_string_lossy(),
+        bytes.len(),
+        ext,
+        started.elapsed().as_millis()
+    );
     Ok((bytes, ext))
 }
 
@@ -1363,23 +1518,38 @@ pub async fn embed_storyboard_image_metadata(
 
 #[tauri::command]
 pub async fn persist_image_source(app: AppHandle, source: String) -> Result<String, String> {
+    let started = Instant::now();
     let trimmed = source.trim();
     if trimmed.is_empty() {
         return Err("Image source is empty".to_string());
     }
 
     let (bytes, extension) = resolve_source_bytes(trimmed).await?;
+    let byte_len = bytes.len();
     let images_dir = resolve_images_dir(&app)?;
     let digest = md5::compute(&bytes);
     let filename = format!("{:x}.{}", digest, extension);
     let output_path = images_dir.join(filename);
+    let existed = output_path.exists();
 
-    if !output_path.exists() {
+    if !existed {
         std::fs::write(&output_path, bytes)
             .map_err(|e| format!("Failed to persist image source: {}", e))?;
     }
 
-    Ok(output_path.to_string_lossy().to_string())
+    let output = output_path.to_string_lossy().to_string();
+    info!(
+        "[ImagePipeline] persist_image_source done: source_kind={}, source_len={}, bytes={}, ext={}, output={}, existed={}, elapsed={}ms",
+        classify_image_source(trimmed),
+        trimmed.len(),
+        byte_len,
+        extension,
+        output,
+        existed,
+        started.elapsed().as_millis()
+    );
+
+    Ok(output)
 }
 
 #[tauri::command]
@@ -1400,9 +1570,10 @@ pub async fn persist_image_binary(
 
     let output = persist_image_bytes(&app, &bytes, &resolved_extension)?;
     info!(
-        "persist_image_binary done: bytes={}, ext={}, elapsed={}ms",
+        "[ImagePipeline] persist_image_binary done: bytes={}, ext={}, output={}, elapsed={}ms",
         bytes.len(),
         resolved_extension,
+        output,
         started.elapsed().as_millis()
     );
     Ok(output)
@@ -1475,6 +1646,7 @@ pub async fn save_image_source_to_downloads(
     }
 
     let (bytes, extension) = resolve_source_bytes(trimmed).await?;
+    let byte_len = bytes.len();
     let user_dirs = UserDirs::new().ok_or_else(|| "Failed to resolve user dirs".to_string())?;
     let downloads_dir = user_dirs
         .download_dir()
@@ -1503,6 +1675,15 @@ pub async fn save_image_source_to_downloads(
     std::fs::write(&output_path, bytes)
         .map_err(|e| format!("Failed to save image into downloads: {}", e))?;
 
+    info!(
+        "[ImageSave] downloads saved: source_kind={}, source_len={}, bytes={}, output={}, ext={}",
+        classify_image_source(trimmed),
+        trimmed.len(),
+        byte_len,
+        output_path.to_string_lossy(),
+        extension
+    );
+
     Ok(output_path.to_string_lossy().to_string())
 }
 
@@ -1519,6 +1700,7 @@ pub async fn save_image_source_to_path(source: String, target_path: String) -> R
     }
 
     let (bytes, extension) = resolve_source_bytes(trimmed_source).await?;
+    let byte_len = bytes.len();
     let raw_path = PathBuf::from(trimmed_target);
     let output_path = ensure_output_path_with_extension(&raw_path, &extension);
 
@@ -1529,6 +1711,15 @@ pub async fn save_image_source_to_path(source: String, target_path: String) -> R
 
     std::fs::write(&output_path, bytes)
         .map_err(|e| format!("Failed to save image to target path: {}", e))?;
+
+    info!(
+        "[ImageSave] path saved: source_kind={}, source_len={}, bytes={}, output={}, ext={}",
+        classify_image_source(trimmed_source),
+        trimmed_source.len(),
+        byte_len,
+        output_path.to_string_lossy(),
+        extension
+    );
 
     Ok(output_path.to_string_lossy().to_string())
 }
@@ -1550,6 +1741,7 @@ pub async fn save_image_source_to_directory(
     }
 
     let (bytes, extension) = resolve_source_bytes(trimmed_source).await?;
+    let byte_len = bytes.len();
     let dir_path = PathBuf::from(trimmed_dir);
     std::fs::create_dir_all(&dir_path)
         .map_err(|e| format!("Failed to create target dir: {}", e))?;
@@ -1572,6 +1764,15 @@ pub async fn save_image_source_to_directory(
     )));
     std::fs::write(&output_path, bytes)
         .map_err(|e| format!("Failed to save image to target directory: {}", e))?;
+
+    info!(
+        "[ImageSave] directory saved: source_kind={}, source_len={}, bytes={}, output={}, ext={}",
+        classify_image_source(trimmed_source),
+        trimmed_source.len(),
+        byte_len,
+        output_path.to_string_lossy(),
+        extension
+    );
 
     Ok(output_path.to_string_lossy().to_string())
 }
@@ -1650,10 +1851,21 @@ pub async fn copy_image_source_to_clipboard(source: String) -> Result<(), String
 
 #[tauri::command]
 pub async fn load_image(file_path: String) -> Result<String, String> {
-    info!("Loading image from: {}", file_path);
+    let started = Instant::now();
+    info!("[ImagePipeline] load_image start: path={}", file_path);
 
-    let image_data =
-        std::fs::read(&file_path).map_err(|e| format!("Failed to read file: {}", e))?;
+    let image_data = match std::fs::read(&file_path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            warn!(
+                "[ImagePipeline] load_image failed: path={}, error={}, elapsed={}ms",
+                file_path,
+                error,
+                started.elapsed().as_millis()
+            );
+            return Err(format!("Failed to read file: {}", error));
+        }
+    };
 
     let base64_data = STANDARD.encode(&image_data);
 
@@ -1668,6 +1880,15 @@ pub async fn load_image(file_path: String) -> Result<String, String> {
     } else {
         "image/png"
     };
+
+    info!(
+        "[ImagePipeline] load_image done: path={}, bytes={}, mime={}, data_url_len={}, elapsed={}ms",
+        file_path,
+        image_data.len(),
+        mime,
+        base64_data.len() + mime.len() + "data:;base64,".len(),
+        started.elapsed().as_millis()
+    );
 
     Ok(format!("data:{};base64,{}", mime, base64_data))
 }

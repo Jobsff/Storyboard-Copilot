@@ -1,5 +1,7 @@
 use serde::Serialize;
+use std::path::PathBuf;
 use std::process::Command;
+use tracing::{error, info, warn};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -7,6 +9,39 @@ pub struct RuntimeSystemInfo {
     pub os_name: String,
     pub os_version: String,
     pub os_build: String,
+    pub log_dir: Option<String>,
+}
+
+fn resolve_log_dir() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+
+    #[cfg(target_os = "macos")]
+    if let Ok(home) = std::env::var("HOME") {
+        candidates.push(PathBuf::from(home).join("Library/Logs/storyboard-copilot"));
+    }
+
+    #[cfg(target_os = "windows")]
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        candidates.push(PathBuf::from(local_app_data).join("storyboard-copilot").join("logs"));
+    }
+
+    candidates.push(std::env::temp_dir().join("storyboard-copilot/logs"));
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(current_dir.join("logs"));
+    }
+
+    for directory in candidates {
+        if std::fs::create_dir_all(&directory).is_ok() {
+            return Some(directory);
+        }
+    }
+
+    None
+}
+
+fn log_dir_string() -> Option<String> {
+    resolve_log_dir().map(|path| path.to_string_lossy().to_string())
 }
 
 fn run_command(program: &str, args: &[&str]) -> Option<String> {
@@ -62,6 +97,7 @@ fn resolve_windows_info() -> RuntimeSystemInfo {
         os_name: product_name,
         os_version: normalized_version,
         os_build: build,
+        log_dir: log_dir_string(),
     }
 }
 
@@ -74,6 +110,7 @@ fn resolve_macos_info() -> RuntimeSystemInfo {
         os_name: "macOS".to_string(),
         os_version: version,
         os_build: build,
+        log_dir: log_dir_string(),
     }
 }
 
@@ -97,6 +134,7 @@ fn resolve_linux_info() -> RuntimeSystemInfo {
         os_name,
         os_version,
         os_build: build,
+        log_dir: log_dir_string(),
     }
 }
 
@@ -106,6 +144,7 @@ fn resolve_generic_info() -> RuntimeSystemInfo {
         os_name: std::env::consts::OS.to_string(),
         os_version: "unknown".to_string(),
         os_build: "unknown".to_string(),
+        log_dir: log_dir_string(),
     }
 }
 
@@ -130,4 +169,29 @@ pub fn get_runtime_system_info() -> RuntimeSystemInfo {
     {
         resolve_generic_info()
     }
+}
+
+#[tauri::command]
+pub async fn log_frontend_event(
+    level: Option<String>,
+    message: String,
+    payload: Option<serde_json::Value>,
+) -> Result<(), String> {
+    let normalized_level = level
+        .as_deref()
+        .unwrap_or("info")
+        .trim()
+        .to_ascii_lowercase();
+    let safe_message = message.trim();
+    let payload_text = payload
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "{}".to_string());
+
+    match normalized_level.as_str() {
+        "warn" | "warning" => warn!("[Frontend] {} payload={}", safe_message, payload_text),
+        "error" => error!("[Frontend] {} payload={}", safe_message, payload_text),
+        _ => info!("[Frontend] {} payload={}", safe_message, payload_text),
+    }
+
+    Ok(())
 }

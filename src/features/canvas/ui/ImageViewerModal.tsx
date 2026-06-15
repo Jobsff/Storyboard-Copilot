@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronRight, RotateCcw, X } from 'lucide-react';
 import { UI_CONTENT_OVERLAY_INSET_CLASS } from '@/components/ui/motion';
 import { loadImage } from '@/commands/image';
+import { logFrontendEvent } from '@/commands/system';
 import { isLikelyLocalImagePath, resolveImageDisplayUrl } from '../application/imageData';
 import { useImageViewerTransform } from '../hooks/useImageViewerTransform';
 
@@ -13,6 +14,29 @@ export interface ImageViewerModalProps {
   currentIndex: number;
   onClose: () => void;
   onNavigate: (direction: 'prev' | 'next') => void;
+}
+
+function classifyViewerSource(source: string): string {
+  if (source.startsWith('data:')) return 'data-url';
+  if (source.startsWith('asset://') || source.includes('asset.localhost')) return 'tauri-asset';
+  if (source.startsWith('file://')) return 'file-url';
+  if (source.startsWith('http://') || source.startsWith('https://')) return 'remote-url';
+  return 'local-path';
+}
+
+function logImageViewerEvent(
+  level: 'info' | 'warn' | 'error',
+  message: string,
+  payload: Record<string, unknown>
+): void {
+  if (level === 'error') {
+    console.error(message, payload);
+  } else if (level === 'warn') {
+    console.warn(message, payload);
+  } else {
+    console.info(message, payload);
+  }
+  void logFrontendEvent(level, message, payload);
 }
 
 export function ImageViewerModal({
@@ -88,9 +112,16 @@ export function ImageViewerModal({
     if (!open || !imageUrl) {
       return;
     }
+    logImageViewerEvent('info', '[ImageViewer] open', {
+      sourceKind: classifyViewerSource(imageUrl),
+      sourceLength: imageUrl.length,
+      imageListLength: imageList.length,
+      currentIndex,
+      isLikelyLocalPath: isLikelyLocalImagePath(imageUrl),
+    });
     setDisplayImageUrl(imageUrl);
     setFallbackImageUrl('');
-  }, [open, imageUrl]);
+  }, [open, imageUrl, imageList.length, currentIndex]);
 
   useEffect(() => {
     return () => {
@@ -160,15 +191,35 @@ export function ImageViewerModal({
             }}
             onLoad={handleImageLoad}
             onError={() => {
+              logImageViewerEvent('warn', '[ImageViewer] image element failed to decode', {
+                sourceKind: classifyViewerSource(displayImageUrl),
+                sourceLength: displayImageUrl.length,
+                resolvedKind: classifyViewerSource(resolvedDisplayImageUrl),
+                resolvedLength: resolvedDisplayImageUrl.length,
+                hasFallback: Boolean(fallbackImageUrl),
+                isLikelyLocalPath: isLikelyLocalImagePath(displayImageUrl),
+              });
               if (fallbackImageUrl || !isLikelyLocalImagePath(displayImageUrl)) {
                 return;
               }
+              logImageViewerEvent('info', '[ImageViewer] loading local image fallback', {
+                sourceKind: classifyViewerSource(displayImageUrl),
+                sourceLength: displayImageUrl.length,
+              });
               loadImage(displayImageUrl)
-                .then((dataUrl) => setFallbackImageUrl(dataUrl))
+                .then((dataUrl) => {
+                  logImageViewerEvent('info', '[ImageViewer] local image fallback loaded', {
+                    sourceKind: classifyViewerSource(displayImageUrl),
+                    sourceLength: displayImageUrl.length,
+                    dataUrlLength: dataUrl.length,
+                  });
+                  setFallbackImageUrl(dataUrl);
+                })
                 .catch((error) => {
-                  console.error('[ImageViewer] failed to load local image fallback', {
-                    source: displayImageUrl,
-                    error,
+                  logImageViewerEvent('error', '[ImageViewer] failed to load local image fallback', {
+                    sourceKind: classifyViewerSource(displayImageUrl),
+                    sourceLength: displayImageUrl.length,
+                    error: error instanceof Error ? error.message : String(error),
                   });
                 });
             }}

@@ -25,6 +25,11 @@ fn resolve_log_dir() -> Option<PathBuf> {
         candidates.push(PathBuf::from(home).join("Library/Logs/storyboard-copilot"));
     }
 
+    #[cfg(target_os = "windows")]
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        candidates.push(PathBuf::from(local_app_data).join("storyboard-copilot").join("logs"));
+    }
+
     candidates.push(std::env::temp_dir().join("storyboard-copilot/logs"));
 
     if let Ok(current_dir) = std::env::current_dir() {
@@ -202,6 +207,7 @@ pub fn run() {
             project_state::export_project_images,
             project_state::import_project_package,
             system::get_runtime_system_info,
+            system::log_frontend_event,
             update::check_latest_release_tag,
         ])
         .run(tauri::generate_context!())

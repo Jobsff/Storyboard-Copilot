@@ -904,6 +904,29 @@ fn format_api666_images_error(
     format!("API error {}: {}", status, raw)
 }
 
+fn format_api666_upstream_error(status: reqwest::StatusCode, error_text: &str) -> String {
+    let trimmed = error_text.trim();
+    let raw = if trimmed.len() > 1600 {
+        format!("{}...(truncated)", &trimmed[..1600])
+    } else {
+        trimmed.to_string()
+    };
+    let lower = trimmed.to_ascii_lowercase();
+
+    if lower.contains("resource has been exhausted")
+        || lower.contains("\"code\":429")
+        || lower.contains("quota")
+        || lower.contains("rate limit")
+    {
+        return format!(
+            "666API 上游资源/配额暂时耗尽（Gemini 返回 429，但中转站包装为 HTTP {}）。这通常不是本地故障；请稍后重试，或临时降到 1K/切换模型。原始响应: {}",
+            status, raw
+        );
+    }
+
+    format!("API error {}: {}", status, raw)
+}
+
 async fn post_gpt_image_2_edit_request(
     client: &Client,
     endpoint: &str,
@@ -1235,10 +1258,7 @@ async fn submit_gemini_via_chat_completions(
     if !response.status().is_success() {
         let status = response.status();
         let error_text = response.text().await.unwrap_or_default();
-        return Err(AIError::Provider(format!(
-            "API error {}: {}",
-            status, error_text
-        )));
+        return Err(AIError::Provider(format_api666_upstream_error(status, &error_text)));
     }
 
     let raw_text = response.text().await.unwrap_or_default();
@@ -1447,10 +1467,7 @@ async fn generate_via_gemini_native(
     if !response.status().is_success() {
         let status = response.status();
         let error_text = response.text().await.unwrap_or_default();
-        return Err(AIError::Provider(format!(
-            "API error {}: {}",
-            status, error_text
-        )));
+        return Err(AIError::Provider(format_api666_upstream_error(status, &error_text)));
     }
 
     let result: GeminiGenerateResponse = response.json().await?;
