@@ -329,43 +329,6 @@ fn resolve_images_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(images_dir)
 }
 
-fn prune_unreferenced_images(app: &AppHandle) -> Result<(), String> {
-    let conn = open_db(app)?;
-    let mut stmt = conn
-        .prepare("SELECT DISTINCT path FROM project_image_refs")
-        .map_err(|e| format!("Failed to prepare image refs query: {}", e))?;
-
-    let rows = stmt
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(|e| format!("Failed to query image refs: {}", e))?;
-
-    let mut referenced = HashSet::new();
-    for path_result in rows {
-        let path = path_result.map_err(|e| format!("Failed to decode image ref row: {}", e))?;
-        referenced.insert(path);
-    }
-
-    let images_dir = resolve_images_dir(app)?;
-    let entries = std::fs::read_dir(&images_dir)
-        .map_err(|e| format!("Failed to read images dir: {}", e))?;
-
-    for entry_result in entries {
-        let entry = entry_result.map_err(|e| format!("Failed to iterate images dir: {}", e))?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-
-        let path_string = path.to_string_lossy().to_string();
-        if !referenced.contains(&path_string) {
-            std::fs::remove_file(&path)
-                .map_err(|e| format!("Failed to delete unreferenced image: {}", e))?;
-        }
-    }
-
-    Ok(())
-}
-
 fn resolve_spine_assets_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let app_data_dir = app
         .path()
@@ -376,92 +339,6 @@ fn resolve_spine_assets_dir(app: &AppHandle) -> Result<PathBuf, String> {
     std::fs::create_dir_all(&assets_dir)
         .map_err(|e| format!("Failed to create spine assets dir: {}", e))?;
     Ok(assets_dir)
-}
-
-fn collect_files_recursively(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
-    let entries = std::fs::read_dir(dir).map_err(|e| format!("Failed to read dir {}: {}", dir.display(), e))?;
-    for entry_result in entries {
-        let entry = entry_result.map_err(|e| format!("Failed to iterate dir {}: {}", dir.display(), e))?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_files_recursively(&path, files)?;
-            continue;
-        }
-        if path.is_file() {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-
-fn prune_empty_directories(dir: &Path) -> Result<(), String> {
-    let entries = std::fs::read_dir(dir).map_err(|e| format!("Failed to read dir {}: {}", dir.display(), e))?;
-    let mut subdirs: Vec<PathBuf> = Vec::new();
-    let mut has_files = false;
-    for entry_result in entries {
-        let entry = entry_result.map_err(|e| format!("Failed to iterate dir {}: {}", dir.display(), e))?;
-        let path = entry.path();
-        if path.is_dir() {
-            subdirs.push(path);
-            continue;
-        }
-        if path.is_file() {
-            has_files = true;
-        }
-    }
-
-    for subdir in subdirs {
-        prune_empty_directories(&subdir)?;
-    }
-
-    let entries = std::fs::read_dir(dir).map_err(|e| format!("Failed to read dir {}: {}", dir.display(), e))?;
-    let mut has_any = false;
-    for entry_result in entries {
-        let entry = entry_result.map_err(|e| format!("Failed to iterate dir {}: {}", dir.display(), e))?;
-        let path = entry.path();
-        if path.is_file() || path.is_dir() {
-            has_any = true;
-            break;
-        }
-    }
-
-    if !has_files && !has_any {
-        let _ = std::fs::remove_dir(dir);
-    }
-
-    Ok(())
-}
-
-fn prune_unreferenced_assets(app: &AppHandle) -> Result<(), String> {
-    let conn = open_db(app)?;
-    let mut stmt = conn
-        .prepare("SELECT DISTINCT path FROM project_asset_refs")
-        .map_err(|e| format!("Failed to prepare asset refs query: {}", e))?;
-
-    let rows = stmt
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(|e| format!("Failed to query asset refs: {}", e))?;
-
-    let mut referenced = HashSet::new();
-    for path_result in rows {
-        let path = path_result.map_err(|e| format!("Failed to decode asset ref row: {}", e))?;
-        referenced.insert(path);
-    }
-
-    let assets_dir = resolve_spine_assets_dir(app)?;
-    let mut files = Vec::new();
-    collect_files_recursively(&assets_dir, &mut files)?;
-
-    for path in files {
-        let path_string = path.to_string_lossy().to_string();
-        if !referenced.contains(&path_string) {
-            std::fs::remove_file(&path)
-                .map_err(|e| format!("Failed to delete unreferenced asset: {}", e))?;
-        }
-    }
-
-    prune_empty_directories(&assets_dir)?;
-    Ok(())
 }
 
 fn now_timestamp_ms() -> i64 {
@@ -650,8 +527,6 @@ pub fn upsert_project_record(app: AppHandle, record: ProjectRecord) -> Result<()
     tx.commit()
         .map_err(|e| format!("Failed to commit upsert transaction: {}", e))?;
 
-    prune_unreferenced_images(&app)?;
-    prune_unreferenced_assets(&app)?;
     Ok(())
 }
 
@@ -710,8 +585,6 @@ pub fn delete_project_record(app: AppHandle, project_id: String) -> Result<(), S
     tx.commit()
         .map_err(|e| format!("Failed to commit delete transaction: {}", e))?;
 
-    prune_unreferenced_images(&app)?;
-    prune_unreferenced_assets(&app)?;
     Ok(())
 }
 
