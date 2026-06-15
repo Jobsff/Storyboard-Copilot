@@ -617,7 +617,7 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
     [incomingImages]
   );
   const incomingImageViewerList = useMemo(
-    () => incomingImageItems.map((item) => resolveImageDisplayUrl(item.imageUrl)),
+    () => incomingImageItems.map((item) => item.imageUrl),
     [incomingImageItems]
   );
 
@@ -1613,7 +1613,7 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
                 <CanvasNodeImage
                   src={item.displayUrl}
                   alt={item.label}
-                  viewerSourceUrl={resolveImageDisplayUrl(item.imageUrl)}
+                  viewerSourceUrl={item.imageUrl}
                   viewerImageList={incomingImageViewerList}
                   className="h-8 w-8 rounded object-cover"
                 />

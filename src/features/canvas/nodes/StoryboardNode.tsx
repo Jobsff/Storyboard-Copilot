@@ -321,7 +321,7 @@ const FrameCard = memo(
     }, [frame.imageUrl, frame.previewImageUrl, zoom]);
     const viewerSource = useMemo(() => {
       const picked = frame.imageUrl || frame.previewImageUrl;
-      return picked ? resolveImageDisplayUrl(picked) : null;
+      return picked ?? null;
     }, [frame.imageUrl, frame.previewImageUrl]);
 
     const dragging = draggedFrameId === frame.id;
@@ -568,13 +568,13 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
       orderedFrames
         .map((frame) => {
           const source = frame.imageUrl || frame.previewImageUrl;
-          return source ? resolveImageDisplayUrl(source) : null;
+          return source ?? null;
         })
         .filter((item): item is string => Boolean(item)),
     [orderedFrames]
   );
   const incomingImageViewerList = useMemo(
-    () => incomingImageItems.map((item) => resolveImageDisplayUrl(item.imageUrl)),
+    () => incomingImageItems.map((item) => item.imageUrl),
     [incomingImageItems]
   );
 
@@ -1182,7 +1182,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
               <CanvasNodeImage
                 src={activeAnimationDisplayUrl}
                 alt="sequence-frame-preview"
-                viewerSourceUrl={activeAnimationDisplayUrl}
+                viewerSourceUrl={activeAnimationFrame?.imageUrl ?? activeAnimationFrame?.previewImageUrl ?? null}
                 viewerImageList={frameViewerImageList}
                 className={`h-full w-full ${exportOptions.imageFit === 'contain' ? 'object-contain' : 'object-cover'}`}
                 draggable={false}
@@ -1257,7 +1257,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
                     <CanvasNodeImage
                       src={item.displayUrl}
                       alt={item.label}
-                      viewerSourceUrl={resolveImageDisplayUrl(item.imageUrl)}
+                      viewerSourceUrl={item.imageUrl}
                       viewerImageList={incomingImageViewerList}
                       className="h-8 w-8 rounded object-cover"
                       draggable={false}

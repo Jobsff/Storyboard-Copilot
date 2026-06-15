@@ -1112,12 +1112,7 @@ fn extension_from_path_like(value: &str) -> Option<String> {
     Some(ext)
 }
 
-fn decode_file_url_path(value: &str) -> String {
-    let raw = value.trim_start_matches("file://");
-    let decoded = urlencoding::decode(raw)
-        .map(|result| result.into_owned())
-        .unwrap_or_else(|_| raw.to_string());
-
+fn normalize_decoded_local_path(decoded: String) -> String {
     if cfg!(target_os = "windows")
         && decoded.starts_with('/')
         && decoded.len() > 2
@@ -1127,6 +1122,41 @@ fn decode_file_url_path(value: &str) -> String {
     } else {
         decoded
     }
+}
+
+fn decode_file_url_path(value: &str) -> String {
+    let raw = value.trim_start_matches("file://");
+    let decoded = urlencoding::decode(raw)
+        .map(|result| result.into_owned())
+        .unwrap_or_else(|_| raw.to_string());
+
+    normalize_decoded_local_path(decoded)
+}
+
+fn decode_tauri_asset_url_path(value: &str) -> Option<String> {
+    let raw_path = if let Some(rest) = value.strip_prefix("asset://") {
+        let slash_index = rest.find('/')?;
+        &rest[slash_index..]
+    } else if let Some(rest) = value.strip_prefix("http://asset.localhost") {
+        rest
+    } else if let Some(rest) = value.strip_prefix("https://asset.localhost") {
+        rest
+    } else {
+        return None;
+    };
+
+    let cleaned = raw_path
+        .split('#')
+        .next()
+        .unwrap_or(raw_path)
+        .split('?')
+        .next()
+        .unwrap_or(raw_path);
+    let decoded = urlencoding::decode(cleaned)
+        .map(|result| result.into_owned())
+        .unwrap_or_else(|_| cleaned.to_string());
+
+    Some(normalize_decoded_local_path(decoded))
 }
 
 fn parse_data_url(source: &str) -> Result<(Vec<u8>, String), String> {
@@ -1225,6 +1255,18 @@ fn encode_png_with_storyboard_metadata(
 async fn resolve_source_bytes(source: &str) -> Result<(Vec<u8>, String), String> {
     if source.starts_with("data:") {
         return parse_data_url(source);
+    }
+
+    if let Some(asset_path) = decode_tauri_asset_url_path(source) {
+        let local_path = PathBuf::from(asset_path);
+        let bytes = std::fs::read(&local_path)
+            .map_err(|e| format!("Failed to read Tauri asset image source: {}", e))?;
+        let ext = local_path
+            .extension()
+            .and_then(|item| item.to_str())
+            .map(normalize_extension)
+            .unwrap_or_else(|| "png".to_string());
+        return Ok((bytes, ext));
     }
 
     if source.starts_with("http://") || source.starts_with("https://") {

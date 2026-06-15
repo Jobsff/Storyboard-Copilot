@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronRight, RotateCcw, X } from 'lucide-react';
 import { UI_CONTENT_OVERLAY_INSET_CLASS } from '@/components/ui/motion';
+import { loadImage } from '@/commands/image';
+import { isLikelyLocalImagePath, resolveImageDisplayUrl } from '../application/imageData';
 import { useImageViewerTransform } from '../hooks/useImageViewerTransform';
 
 export interface ImageViewerModalProps {
@@ -27,6 +29,7 @@ export function ImageViewerModal({
   const [isVisible, setIsVisible] = useState(false);
   const [overlayOpacity, setOverlayOpacity] = useState(0);
   const [displayImageUrl, setDisplayImageUrl] = useState(imageUrl);
+  const [fallbackImageUrl, setFallbackImageUrl] = useState('');
   const closeTimerRef = useRef<number | null>(null);
 
   const {
@@ -54,6 +57,7 @@ export function ImageViewerModal({
   useEffect(() => {
     if (open) {
       setDisplayImageUrl(imageUrl);
+      setFallbackImageUrl('');
       setIsVisible(true);
       if (closeTimerRef.current) {
         clearTimeout(closeTimerRef.current);
@@ -70,6 +74,7 @@ export function ImageViewerModal({
     closeTimerRef.current = window.setTimeout(() => {
       setIsVisible(false);
       setDisplayImageUrl('');
+      setFallbackImageUrl('');
     }, 400);
     return () => {
       if (closeTimerRef.current) {
@@ -84,6 +89,7 @@ export function ImageViewerModal({
       return;
     }
     setDisplayImageUrl(imageUrl);
+    setFallbackImageUrl('');
   }, [open, imageUrl]);
 
   useEffect(() => {
@@ -117,6 +123,8 @@ export function ImageViewerModal({
 
   if (!isVisible) return null;
 
+  const resolvedDisplayImageUrl = fallbackImageUrl || resolveImageDisplayUrl(displayImageUrl);
+
   return (
     <div
       className={`fixed ${UI_CONTENT_OVERLAY_INSET_CLASS} z-[100] overflow-hidden bg-black/90 backdrop-blur-lg`}
@@ -140,7 +148,7 @@ export function ImageViewerModal({
         <div className="relative">
           <img
             ref={imageRef}
-            src={displayImageUrl}
+            src={resolvedDisplayImageUrl}
             alt={t('viewer.imageAlt', '图片')}
             className="select-none transition-opacity duration-300"
             style={{
@@ -151,6 +159,19 @@ export function ImageViewerModal({
               objectFit: 'contain',
             }}
             onLoad={handleImageLoad}
+            onError={() => {
+              if (fallbackImageUrl || !isLikelyLocalImagePath(displayImageUrl)) {
+                return;
+              }
+              loadImage(displayImageUrl)
+                .then((dataUrl) => setFallbackImageUrl(dataUrl))
+                .catch((error) => {
+                  console.error('[ImageViewer] failed to load local image fallback', {
+                    source: displayImageUrl,
+                    error,
+                  });
+                });
+            }}
             onMouseDown={handleImageMouseDown}
             onMouseMove={handleImageMouseMove}
             onClick={(e) => {

@@ -279,7 +279,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     [incomingImages]
   );
   const incomingImageViewerList = useMemo(
-    () => incomingImageItems.map((item) => resolveImageDisplayUrl(item.imageUrl)),
+    () => incomingImageItems.map((item) => item.imageUrl),
     [incomingImageItems]
   );
 
@@ -939,7 +939,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
                   <CanvasNodeImage
                     src={item.displayUrl}
                     alt={item.label}
-                    viewerSourceUrl={resolveImageDisplayUrl(item.imageUrl)}
+                    viewerSourceUrl={item.imageUrl}
                     viewerImageList={incomingImageViewerList}
                     className="h-8 w-8 rounded object-cover"
                     draggable={false}

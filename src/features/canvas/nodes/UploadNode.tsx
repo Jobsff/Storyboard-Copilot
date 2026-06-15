@@ -330,7 +330,7 @@ export const UploadNode = memo(({ id, data, selected, width, height }: UploadNod
         >
           <CanvasNodeImage
             src={imageSource ?? ''}
-            viewerSourceUrl={data.imageUrl ? resolveImageDisplayUrl(data.imageUrl) : null}
+            viewerSourceUrl={data.imageUrl}
             alt={t('node.upload.uploadedAlt')}
             className="h-full w-full object-contain"
             onLoad={handleImageLoad}

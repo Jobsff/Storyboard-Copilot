@@ -144,7 +144,7 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
   // 获取原图 URL 用于查看器
   const originalImageUrl = useMemo(() => {
     if (!data.imageUrl) return null;
-    return resolveImageDisplayUrl(data.imageUrl);
+    return data.imageUrl;
   }, [data.imageUrl]);
 
   return (
