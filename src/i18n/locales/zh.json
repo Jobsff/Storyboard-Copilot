@@ -270,6 +270,7 @@
       "actionPlaceholder": "例如：跑动循环、跳跃攻击、魔法攻击、受击倒地、待机呼吸",
       "promptPreview": "提示词预览",
       "generate": "生成序列帧",
+      "rerunWithGpt": "GPT 重跑",
       "generating": "生成中...",
       "apiKeyRequired": "请先在设置中配置当前图片模型的 API Key",
       "generateFailed": "序列帧生成失败",

@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Loader2, Play, Sparkles } from 'lucide-react';
+import { Loader2, Play, RefreshCcw, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { craftImagePrompt } from '@/commands/ai';
@@ -28,6 +28,7 @@ import {
   resolveImageModelResolution,
   resolveImageModelResolutions,
 } from '@/features/canvas/models';
+import { API666_GPT_IMAGE_2_MODEL_ID } from '@/features/canvas/models/image/api666/gptImage2';
 import { resolve666ApiKey } from '@/features/canvas/models/providers/api666';
 import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
@@ -50,7 +51,9 @@ const NODE_WIDTH = 330;
 const NODE_MIN_HEIGHT = 420;
 const SUPPORTED_GRID_SIZES = [2, 3, 4] as const;
 const CHROMA_KEY_BACKGROUND_REQUIREMENT =
-  'Use a perfectly flat chroma-key background color: pure bright green #00FF00. The background must be one uniform solid color in every cell, with no gradient, no texture, no shadow, no contact shadow, no floor, no grid lines, no checkerboard, and no white/gray backdrop. Do not use green anywhere on the character, clothing, weapon, effects, outlines, highlights, or shadows.';
+  'Use a perfectly flat chroma-key background color: pure bright magenta #FF00FF. The background must be one uniform solid color in every cell, with no gradient, no texture, no shadow, no contact shadow, no floor, no grid lines, no checkerboard, and no white/gray backdrop. Do not use magenta, pink, purple, or violet anywhere on the character, clothing, weapon, effects, outlines, highlights, or shadows.';
+const SEQUENCE_GRID_LAYOUT_REQUIREMENT =
+  'Use an invisible grid only. Do not draw actual divider lines, panel borders, gutters, seams, frame numbers, captions, or labels. Leave a clean safe margin around every pose so a cutter can split the sheet into equal square cells without touching the character.';
 
 type SequenceGridSize = (typeof SUPPORTED_GRID_SIZES)[number];
 
@@ -210,11 +213,13 @@ function buildLocalSequencePrompt(action: string, hasReferenceImage: boolean, gr
     `The ${frameCount} cells must be sequential animation keyframes ordered left to right, top to bottom. Every cell must show a different pose and a clear time progression.`,
     `Do NOT repeat the same standing pose. Do NOT create ${frameCount} duplicate characters. Treat each cell as one frame of the same character over time.`,
     ...stages.map((stage, index) => `Frame ${index + 1}: ${stage}.`),
-    'Keep one full-body character in each cell, centered, same scale, same camera angle, same lighting, same style, but with clearly different limb positions, weight shift, hair/cloth movement, and silhouette.',
+    'Keep exactly one full-body character in each cell, centered, same scale, same camera angle, same lighting, same style, and same silhouette volume, but with clearly different limb positions, weight shift, hair/cloth movement, and silhouette.',
     'Critical layout rule: the complete character must stay fully inside each cell with generous safe margins. No head, hair, feet, weapon, hand, or clothing may cross cell borders or be cropped.',
     'Critical anchor rule: align every frame to the same ground baseline and the same center pivot. Feet should land on a consistent invisible floor line; body center should stay near the center of each cell.',
+    'Keep action effects attached to the character or weapon. Do not add detached floating projectiles, stray particles, ghost copies, or separate props that would become independent animated objects.',
     'Use strong animation principles: anticipation, contact, passing, impact, follow-through, recovery, and loop continuity.',
     'Use visible motion arcs or subtle ghost-free pose changes only; no text, no labels, no numbers, no speech bubbles, no UI, no watermark.',
+    SEQUENCE_GRID_LAYOUT_REQUIREMENT,
     CHROMA_KEY_BACKGROUND_REQUIREMENT,
     `Ensure the grid can be cropped evenly into ${frameCount} independent frames arranged as ${gridLabel}.`,
   ].join('\n');
@@ -354,8 +359,10 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
       `请把下面的动画需求改写成适合 AI 生图模型的一张 ${gridLabel} 序列帧网格提示词。`,
       '要求：角色一致、动作连续、从左到右从上到下阅读、无文字无编号、每格可等分裁切、适合 2D 游戏角色动画/Spine 序列帧使用。',
       '强制要求：每一格角色完整身体必须在格子正中间，脚底在同一条隐形地面基线，头发/脚/武器/衣服不能越出格子边界。每格姿态必须不同，不能复制同一个站姿。',
+      `网格强制要求：${SEQUENCE_GRID_LAYOUT_REQUIREMENT}`,
+      '动作强制要求：特效必须附着在角色或武器上，不要生成脱离主体的漂浮弹体、散落粒子、残影分身或额外道具。',
       `背景强制要求：${CHROMA_KEY_BACKGROUND_REQUIREMENT}`,
-      '不要要求透明背景。请使用纯绿色 #00FF00 抠图背景，因为当前图片模型可能无法生成真实 Alpha 通道。',
+      '不要要求透明背景。请使用纯洋红色 #FF00FF 抠图背景，因为当前图片模型可能无法生成真实 Alpha 通道。',
       incomingImages.length > 0 ? '用户会提供角色参考图，请强调严格保持参考图角色身份、服装、比例、画风。' : '如果没有参考图，请要求创建并保持同一个角色设计。',
       `动作关键词：${currentAction.trim() || '角色跑动循环'}`,
       `帧数：${gridFrameCount}，布局：${gridLabel}`,
@@ -395,8 +402,17 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
     selectedModel.providerId,
   ]);
 
-  const handleGenerate = useCallback(async () => {
-    if (!modelApiKey && selectedModel.providerId !== 'ollama') {
+  const handleGenerate = useCallback(async (overrideModelId?: string) => {
+    const runModel = overrideModelId ? getImageModel(overrideModelId) : selectedModel;
+    const runExtraParams = runModel.id === selectedModel.id
+      ? data.extraParams ?? {}
+      : runModel.defaultExtraParams ?? {};
+    const runApiKey = resolveProviderApiKey(runModel.providerId, apiKeys, runModel.id);
+    const runResolution = resolveImageModelResolution(runModel, data.size, {
+      extraParams: runExtraParams,
+    });
+
+    if (!runApiKey && runModel.providerId !== 'ollama') {
       const message = t('node.sequenceFrameGen.apiKeyRequired');
       setError(message);
       await showErrorDialog(message, t('common.error'));
@@ -420,29 +436,27 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
         generationStatus: t('node.sequenceFrameGen.statusGeneratingImage'),
       });
 
-      await canvasAiGateway.setApiKey(selectedModel.providerId, modelApiKey);
-      const requestResolution = selectedModel.resolveRequest({
+      await canvasAiGateway.setApiKey(runModel.providerId, runApiKey);
+      const requestResolution = runModel.resolveRequest({
         referenceImageCount: incomingImages.length,
       });
       const jobId = await canvasAiGateway.submitGenerateImageJob({
         prompt: craftedPrompt,
         model: requestResolution.requestModel,
-        size: selectedResolution.value,
+        size: runResolution.value,
         aspectRatio: DEFAULT_ASPECT_RATIO,
         referenceImages: incomingImages,
-        extraParams: {
-          ...(data.extraParams ?? {}),
-        },
+        extraParams: runExtraParams,
       });
       const frameNotes = buildFrameNotes(currentAction, gridFrameCount);
       const generationDebugContext: GenerationDebugContext = {
         sourceType: 'sequenceFrameGen',
-        providerId: selectedModel.providerId,
+        providerId: runModel.providerId,
         requestModel: requestResolution.requestModel,
-        requestSize: selectedResolution.value,
+        requestSize: runResolution.value,
         requestAspectRatio: DEFAULT_ASPECT_RATIO,
         prompt: craftedPrompt,
-        extraParams: data.extraParams ?? {},
+        extraParams: runExtraParams,
         referenceImageCount: incomingImages.length,
         appVersion: runtimeDiagnostics.appVersion,
         osName: runtimeDiagnostics.osName,
@@ -462,10 +476,10 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
           data: {
             isGenerating: true,
             generationStartedAt: Date.now(),
-            generationDurationMs: Math.max(180000, selectedModel.expectedDurationMs ?? 60000),
+            generationDurationMs: Math.max(180000, runModel.expectedDurationMs ?? 60000),
             generationJobId: jobId,
             generationSourceType: 'sequenceFrameGen',
-            generationProviderId: selectedModel.providerId,
+            generationProviderId: runModel.providerId,
             generationClientSessionId: CURRENT_RUNTIME_SESSION_ID,
             generationDebugContext,
             generationStoryboardMetadata: {
@@ -496,17 +510,17 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
   }, [
     addDerivedExportNode,
     addEdge,
+    apiKeys,
     commitActionDraft,
     craftSequencePrompt,
     data.extraParams,
+    data.size,
     gridCols,
     gridFrameCount,
     gridRows,
     id,
     incomingImages,
-    modelApiKey,
     selectedModel,
-    selectedResolution.value,
     setSelectedNode,
     t,
     updateNodeData,
@@ -617,24 +631,40 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
         ) : null}
         {error ? <div className="text-[11px] text-red-300">{error}</div> : null}
 
-        <UiButton
-          type="button"
-          className={`nodrag ${NODE_CONTROL_PRIMARY_BUTTON_CLASS} h-9 w-full justify-center gap-2 rounded-2xl`}
-          onClick={(event) => {
-            event.stopPropagation();
-            void handleGenerate();
-          }}
-          disabled={Boolean(data.isGenerating)}
-        >
-          {data.isGenerating ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Play className="h-4 w-4" />
-          )}
-          {data.isGenerating
-            ? t('node.sequenceFrameGen.generating')
-            : t('node.sequenceFrameGen.generate')}
-        </UiButton>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <UiButton
+            type="button"
+            className={`nodrag ${NODE_CONTROL_PRIMARY_BUTTON_CLASS} h-9 justify-center gap-2 rounded-2xl`}
+            onClick={(event) => {
+              event.stopPropagation();
+              void handleGenerate();
+            }}
+            disabled={Boolean(data.isGenerating)}
+          >
+            {data.isGenerating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Play className="h-4 w-4" />
+            )}
+            {data.isGenerating
+              ? t('node.sequenceFrameGen.generating')
+              : t('node.sequenceFrameGen.generate')}
+          </UiButton>
+
+          <UiButton
+            type="button"
+            variant="muted"
+            className="nodrag h-9 justify-center gap-2 rounded-2xl"
+            onClick={(event) => {
+              event.stopPropagation();
+              void handleGenerate(API666_GPT_IMAGE_2_MODEL_ID);
+            }}
+            disabled={Boolean(data.isGenerating)}
+          >
+            <RefreshCcw className="h-4 w-4" />
+            {t('node.sequenceFrameGen.rerunWithGpt')}
+          </UiButton>
+        </div>
       </div>
 
       <NodeResizeHandle minWidth={NODE_WIDTH} minHeight={NODE_MIN_HEIGHT} />

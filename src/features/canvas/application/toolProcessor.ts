@@ -367,8 +367,13 @@ export class CanvasToolProcessor implements ToolProcessor {
         }
         context.drawImage(image, 0, 0, canvas.width, canvas.height);
         const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-        if (this.shouldRemoveBackground(imageData, options.transparentBackgroundMode)) {
+        const shouldRemoveBackground = this.shouldRemoveBackground(
+          imageData,
+          options.transparentBackgroundMode
+        );
+        if (shouldRemoveBackground) {
           this.removeGeneratedBackgroundPixels(imageData);
+          this.clearSequenceFrameEdgePixels(imageData);
           context.putImageData(imageData, 0, 0);
         }
         return {
@@ -440,7 +445,10 @@ export class CanvasToolProcessor implements ToolProcessor {
     if (transparentBackgroundMode === 'remove') {
       return true;
     }
-    return !this.hasRealAlpha(imageData);
+    if (!this.hasRealAlpha(imageData)) {
+      return true;
+    }
+    return Boolean(this.resolveChromaBackgroundColor(imageData));
   }
 
   private hasRealAlpha(imageData: ImageData): boolean {
@@ -454,12 +462,28 @@ export class CanvasToolProcessor implements ToolProcessor {
   }
 
   private removeGeneratedBackgroundPixels(imageData: ImageData): void {
-    const backgroundColor = this.estimateDominantBorderBackgroundColor(imageData);
-    if (backgroundColor && this.isChromaKeyColor(backgroundColor)) {
+    const backgroundColor = this.resolveChromaBackgroundColor(imageData);
+    if (backgroundColor) {
       this.removeChromaKeyBackgroundPixels(imageData, backgroundColor);
       return;
     }
     this.removeLightBackgroundPixels(imageData);
+  }
+
+  private resolveChromaBackgroundColor(
+    imageData: ImageData
+  ): { red: number; green: number; blue: number } | null {
+    const borderColor = this.estimateDominantBorderBackgroundColor(imageData);
+    if (borderColor && this.isChromaKeyColor(borderColor)) {
+      return borderColor;
+    }
+
+    const dominantChromaColor = this.estimateDominantChromaBackgroundColor(imageData);
+    if (dominantChromaColor && this.isChromaKeyColor(dominantChromaColor)) {
+      return dominantChromaColor;
+    }
+
+    return null;
   }
 
   private estimateDominantBorderBackgroundColor(
@@ -510,6 +534,65 @@ export class CanvasToolProcessor implements ToolProcessor {
     };
   }
 
+  private estimateDominantChromaBackgroundColor(
+    imageData: ImageData
+  ): { red: number; green: number; blue: number } | null {
+    const { width, height, data } = imageData;
+    const buckets = new Map<string, { count: number; red: number; green: number; blue: number }>();
+    const stride = Math.max(1, Math.floor(Math.min(width, height) / 180));
+
+    for (let y = 0; y < height; y += stride) {
+      for (let x = 0; x < width; x += stride) {
+        const index = (y * width + x) * 4;
+        if (data[index + 3] === 0) {
+          continue;
+        }
+        const red = data[index];
+        const green = data[index + 1];
+        const blue = data[index + 2];
+        const maxChannel = Math.max(red, green, blue);
+        const minChannel = Math.min(red, green, blue);
+        const brightness = red * 0.299 + green * 0.587 + blue * 0.114;
+        const saturation = maxChannel - minChannel;
+        if (maxChannel < 150 || saturation < 96 || brightness < 58) {
+          continue;
+        }
+
+        const isLikelyMagenta = red > 145 && blue > 145 && green < 130 && red + blue > green * 3.2;
+        const isLikelyGreen = green > 145 && red < 150 && blue < 150 && green > Math.max(red, blue) * 1.35;
+        const isLikelyBlue = blue > 145 && red < 150 && green < 170 && blue > Math.max(red, green) * 1.25;
+        if (!isLikelyMagenta && !isLikelyGreen && !isLikelyBlue) {
+          continue;
+        }
+
+        const key = `${red >> 4},${green >> 4},${blue >> 4}`;
+        const bucket = buckets.get(key) ?? { count: 0, red: 0, green: 0, blue: 0 };
+        bucket.count += 1;
+        bucket.red += red;
+        bucket.green += green;
+        bucket.blue += blue;
+        buckets.set(key, bucket);
+      }
+    }
+
+    let best: { count: number; red: number; green: number; blue: number } | null = null;
+    for (const bucket of buckets.values()) {
+      if (!best || bucket.count > best.count) {
+        best = bucket;
+      }
+    }
+    const sampledPixels = Math.ceil(width / stride) * Math.ceil(height / stride);
+    if (!best || best.count < Math.max(12, Math.floor(sampledPixels * 0.035))) {
+      return null;
+    }
+
+    return {
+      red: Math.round(best.red / best.count),
+      green: Math.round(best.green / best.count),
+      blue: Math.round(best.blue / best.count),
+    };
+  }
+
   private isChromaKeyColor(color: { red: number; green: number; blue: number }): boolean {
     const maxChannel = Math.max(color.red, color.green, color.blue);
     const minChannel = Math.min(color.red, color.green, color.blue);
@@ -525,8 +608,12 @@ export class CanvasToolProcessor implements ToolProcessor {
     const { width, height, data } = imageData;
     const pixelCount = width * height;
     const backgroundMask = new Uint8Array(pixelCount);
-    const nearDistance = 48;
-    const farDistance = 132;
+    const keyYcc = this.rgbToYcc(backgroundColor.red, backgroundColor.green, backgroundColor.blue);
+    const keyVectorCb = keyYcc.cb - 128;
+    const keyVectorCr = keyYcc.cr - 128;
+    const keyVectorLength = Math.hypot(keyVectorCb, keyVectorCr);
+    const nearDistance = 24;
+    const farDistance = 86;
 
     for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
       const dataIndex = pixelIndex * 4;
@@ -535,15 +622,25 @@ export class CanvasToolProcessor implements ToolProcessor {
         backgroundMask[pixelIndex] = 1;
         continue;
       }
-      const distance = this.colorDistanceToBackground(data, dataIndex, backgroundColor);
+      const { cb, cr } = this.rgbToYcc(data[dataIndex], data[dataIndex + 1], data[dataIndex + 2]);
+      const distance = Math.hypot(cb - keyYcc.cb, cr - keyYcc.cr);
       const dominance = this.resolveChromaDominance(data, dataIndex, backgroundColor);
-      if (distance <= nearDistance || dominance >= 0.68) {
+      const matteAlpha = this.smoothstep(nearDistance, farDistance, distance);
+      if (matteAlpha <= 0.02 || dominance >= 0.74) {
         data[dataIndex + 3] = 0;
         backgroundMask[pixelIndex] = 1;
+        continue;
+      }
+      if (distance < 112 || dominance >= 0.18) {
+        const nextAlpha = Math.round(alpha * Math.max(0, Math.min(1, matteAlpha)));
+        data[dataIndex + 3] = nextAlpha;
+        if (nextAlpha <= 10) {
+          backgroundMask[pixelIndex] = 1;
+        }
       }
     }
 
-    // Feather and de-spill edge pixels to avoid green/magenta halos.
+    // Feather and de-spill edge pixels to avoid green/magenta/blue halos.
     for (let y = 0; y < height; y += 1) {
       for (let x = 0; x < width; x += 1) {
         const pixelIndex = y * width + x;
@@ -553,14 +650,15 @@ export class CanvasToolProcessor implements ToolProcessor {
           continue;
         }
 
-        const distance = this.colorDistanceToBackground(data, dataIndex, backgroundColor);
+        const ycc = this.rgbToYcc(data[dataIndex], data[dataIndex + 1], data[dataIndex + 2]);
+        const distance = Math.hypot(ycc.cb - keyYcc.cb, ycc.cr - keyYcc.cr);
         const touchesBackground = this.hasBackgroundNeighbor(backgroundMask, width, height, x, y, 1);
         const chromaDominance = this.resolveChromaDominance(data, dataIndex, backgroundColor);
-        if (!touchesBackground && distance > farDistance && chromaDominance < 0.16) {
+        if (!touchesBackground && distance > 122 && chromaDominance < 0.14) {
           continue;
         }
 
-        const distanceAlpha = Math.max(0, Math.min(1, (distance - nearDistance) / (farDistance - nearDistance)));
+        const distanceAlpha = this.smoothstep(nearDistance, 122, distance);
         const edgeAlpha = touchesBackground ? 0.82 : 0.94;
         const dominanceAlpha = chromaDominance >= 0.16
           ? Math.max(0.18, 1 - chromaDominance * 1.35)
@@ -569,12 +667,92 @@ export class CanvasToolProcessor implements ToolProcessor {
         if (nextAlpha < alpha) {
           data[dataIndex + 3] = nextAlpha;
         }
+        this.removeChromaProjectionSpill(
+          data,
+          dataIndex,
+          keyVectorCb,
+          keyVectorCr,
+          keyVectorLength,
+          distance
+        );
         this.removeChromaSpill(data, dataIndex, backgroundColor, touchesBackground || chromaDominance >= 0.1);
       }
     }
 
     this.removeChromaRimPixels(imageData, backgroundMask, backgroundColor);
     this.removeTinyAlphaSpeckles(imageData, 12);
+  }
+
+  private clearSequenceFrameEdgePixels(imageData: ImageData): void {
+    const { width, height, data } = imageData;
+    const border = Math.max(1, Math.min(10, Math.round(Math.min(width, height) * 0.012)));
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        if (x >= border && y >= border && x < width - border && y < height - border) {
+          continue;
+        }
+        data[(y * width + x) * 4 + 3] = 0;
+      }
+    }
+  }
+
+  private smoothstep(edge0: number, edge1: number, value: number): number {
+    if (edge1 <= edge0) {
+      return 0;
+    }
+    const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
+    return t * t * (3 - 2 * t);
+  }
+
+  private rgbToYcc(red: number, green: number, blue: number): { y: number; cb: number; cr: number } {
+    const y = 0.299 * red + 0.587 * green + 0.114 * blue;
+    return {
+      y,
+      cb: (blue - y) * 0.564 + 128,
+      cr: (red - y) * 0.713 + 128,
+    };
+  }
+
+  private yccToRgb(y: number, cb: number, cr: number): { red: number; green: number; blue: number } {
+    return {
+      red: this.clampColor(y + 1.402 * (cr - 128)),
+      green: this.clampColor(y - 0.344136 * (cb - 128) - 0.714136 * (cr - 128)),
+      blue: this.clampColor(y + 1.772 * (cb - 128)),
+    };
+  }
+
+  private clampColor(value: number): number {
+    return Math.max(0, Math.min(255, Math.round(value)));
+  }
+
+  private removeChromaProjectionSpill(
+    data: Uint8ClampedArray,
+    index: number,
+    keyVectorCb: number,
+    keyVectorCr: number,
+    keyVectorLength: number,
+    distance: number
+  ): void {
+    if (keyVectorLength <= 1 || distance >= 118 || data[index + 3] === 0) {
+      return;
+    }
+    const ycc = this.rgbToYcc(data[index], data[index + 1], data[index + 2]);
+    const pixelVectorCb = ycc.cb - 128;
+    const pixelVectorCr = ycc.cr - 128;
+    const projection =
+      (pixelVectorCb * keyVectorCb + pixelVectorCr * keyVectorCr) / keyVectorLength;
+    if (projection <= 0) {
+      return;
+    }
+    const weight = this.smoothstep(0, 1, (118 - distance) / 118) * 0.92;
+    const unitCb = keyVectorCb / keyVectorLength;
+    const unitCr = keyVectorCr / keyVectorLength;
+    const nextCb = 128 + (pixelVectorCb - unitCb * projection * weight);
+    const nextCr = 128 + (pixelVectorCr - unitCr * projection * weight);
+    const nextRgb = this.yccToRgb(ycc.y, nextCb, nextCr);
+    data[index] = nextRgb.red;
+    data[index + 1] = nextRgb.green;
+    data[index + 2] = nextRgb.blue;
   }
 
   private colorDistanceToBackground(

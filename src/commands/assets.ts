@@ -8,6 +8,7 @@ export interface PersistSpinePackageResult {
 export interface SpineFrameAnimationPayload {
   name?: string;
   frameSources: string[];
+  frameNotes?: string[];
   fps?: number;
   loopAnimation?: boolean;
 }
@@ -15,6 +16,15 @@ export interface SpineFrameAnimationPayload {
 export interface ExportSequenceFramesAsSpinePayload {
   packageName?: string;
   animations: SpineFrameAnimationPayload[];
+  trimTransparent?: boolean;
+  alphaThreshold?: number;
+  maxTextureSize?: number;
+  targetDir?: string;
+}
+
+export interface ExportSequenceFramesAsSpritePackPayload {
+  packageName?: string;
+  animation: SpineFrameAnimationPayload;
   trimTransparent?: boolean;
   alphaThreshold?: number;
   maxTextureSize?: number;
@@ -46,6 +56,24 @@ export async function exportSequenceFramesAsSpine(
 
   const result = await invoke<{ package_id: string; files: Record<string, string> }>(
     'export_sequence_frames_as_spine',
+    { payload }
+  );
+
+  return {
+    packageId: result.package_id,
+    files: result.files,
+  };
+}
+
+export async function exportSequenceFramesAsSpritePack(
+  payload: ExportSequenceFramesAsSpritePackPayload
+): Promise<PersistSpinePackageResult> {
+  if (!isTauri()) {
+    throw new Error('Sprite pack export requires Tauri runtime');
+  }
+
+  const result = await invoke<{ package_id: string; files: Record<string, string> }>(
+    'export_sequence_frames_as_sprite_pack',
     { payload }
   );
 

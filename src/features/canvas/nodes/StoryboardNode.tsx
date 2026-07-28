@@ -22,10 +22,9 @@ import { join } from '@tauri-apps/api/path';
 import {
   embedStoryboardImageMetadata,
   mergeStoryboardImages,
-  saveImageSourceToDirectory,
   type MergeStoryboardImagesResult,
 } from '@/commands/image';
-import { exportSequenceFramesAsSpine } from '@/commands/assets';
+import { exportSequenceFramesAsSpine, exportSequenceFramesAsSpritePack } from '@/commands/assets';
 import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
 import { CanvasNodeImage } from '@/features/canvas/ui/CanvasNodeImage';
@@ -107,14 +106,6 @@ function sanitizePathSegment(raw: string, fallback: string): string {
     .replace(/\.+$/g, '');
 
   return sanitized || fallback;
-}
-
-function sanitizeExportLabel(raw: string, maxLength = 50): string {
-  const compact = sanitizePathSegment(raw, '').replace(/\s+/g, ' ').trim();
-  if (!compact) {
-    return '';
-  }
-  return compact.slice(0, maxLength);
 }
 
 function toCssAspectRatio(aspectRatio: string): string {
@@ -426,6 +417,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
   const nodes = useCanvasStore((state) => state.nodes);
   const edges = useCanvasStore((state) => state.edges);
   const reorderStoryboardFrame = useCanvasStore((state) => state.reorderStoryboardFrame);
+  const addNode = useCanvasStore((state) => state.addNode);
   const addDerivedExportNode = useCanvasStore((state) => state.addDerivedExportNode);
   const addEdge = useCanvasStore((state) => state.addEdge);
   const updateStoryboardFrame = useCanvasStore((state) => state.updateStoryboardFrame);
@@ -967,37 +959,43 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
         return;
       }
 
-      const normalizedProjectName = sanitizePathSegment(currentProjectName ?? '', '未命名项目');
-      const outputDir = await join(rootDir, normalizedProjectName);
-      const fileProjectName = sanitizeExportLabel(normalizedProjectName, 40) || '项目';
-      let firstSavedFilePath = '';
-
-      for (const item of frameEntries) {
-        const frameNo = String(item.index + 1).padStart(2, '0');
-        const noteLabel = sanitizeExportLabel(item.note, 60);
-        const fileStem = noteLabel
-          ? `${fileProjectName}_${frameNo}_${noteLabel}`
-          : `${fileProjectName}_${frameNo}`;
-        const savedPath = await saveImageSourceToDirectory(item.source, outputDir, fileStem);
-        if (!firstSavedFilePath) {
-          firstSavedFilePath = savedPath;
-        }
-      }
-
+      const packageName = sanitizePathSegment(
+        resolvedTitle || currentProjectName || 'sprite_pack',
+        'sprite_pack'
+      );
+      const animationName = sanitizePathSegment(resolvedTitle || 'anim', 'anim');
+      const exported = await exportSequenceFramesAsSpritePack({
+        packageName,
+        animation: {
+          name: animationName,
+          frameSources: frameEntries.map((item) => item.source),
+          frameNotes: frameEntries.map((item) => item.note),
+          fps: animationFps,
+          loopAnimation: true,
+        },
+        trimTransparent: true,
+        alphaThreshold: 8,
+        maxTextureSize: 4096,
+        targetDir: rootDir,
+      });
+      const metadataPath = exported.files['frames.json'] ?? Object.entries(exported.files).find(([name]) => name.endsWith('frames.json'))?.[1] ?? '';
+      const outputDir = await join(rootDir, packageName);
       setPackOutputDir(outputDir);
-      setPackRevealFilePath(firstSavedFilePath);
+      setPackRevealFilePath(metadataPath);
       setIsPackDoneDialogOpen(true);
     } catch (error) {
-      setExportError(error instanceof Error ? error.message : '打包下载失败');
+      setExportError(error instanceof Error ? error.message : '导出游戏包失败');
     } finally {
       setIsPackingSingleImages(false);
     }
   }, [
     currentProjectName,
+    animationFps,
     isExporting,
     isPackingSingleImages,
     orderedFrames,
     resolvePackRootDir,
+    resolvedTitle,
   ]);
 
   const handleExportSpine = useCallback(async () => {
@@ -1020,6 +1018,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
         resolvedTitle || currentProjectName || 'sequence_frames',
         'sequence_frames'
       );
+      const animationName = sanitizePathSegment(resolvedTitle || 'anim', 'anim');
       const rootDir = await resolvePackRootDir();
       if (!rootDir) {
         return;
@@ -1029,8 +1028,9 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
         packageName,
         animations: [
           {
-            name: 'run',
+            name: animationName,
             frameSources,
+            frameNotes: orderedFrames.map((frame) => frame.note ?? ''),
             fps: animationFps,
             loopAnimation: true,
           },
@@ -1055,6 +1055,27 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
       setPackOutputDir(outputDir);
       setPackRevealFilePath(jsonPath);
       setIsPackDoneDialogOpen(true);
+
+      const sourceNode = nodes.find((node) => node.id === id);
+      const spineNodePosition = sourceNode
+        ? {
+          x: sourceNode.position.x + Math.max(420, Number(sourceNode.width) || STORYBOARD_NODE_WIDTH_PX) + 120,
+          y: sourceNode.position.y,
+        }
+        : { x: 100, y: 100 };
+      const spineNodeId = addNode(CANVAS_NODE_TYPES.spine, spineNodePosition, {
+        displayName: `${resolvedTitle || packageName} Spine`,
+        spineJsonPath: jsonPath,
+        spineAtlasPath: atlasPath,
+        spineTexturePaths: texturePaths,
+        spineAnimation: animationName,
+        spineSkin: null,
+        loop: true,
+        timeScale: 1,
+        error: null,
+      });
+      addEdge(id, spineNodeId);
+      setSelectedNode(spineNodeId);
     } catch (error) {
       const message =
         error instanceof Error
@@ -1070,11 +1091,16 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
     }
   }, [
     animationFps,
+    addEdge,
+    addNode,
     currentProjectName,
     isExportingSpine,
+    id,
+    nodes,
     orderedFrames,
     resolvePackRootDir,
     resolvedTitle,
+    setSelectedNode,
   ]);
 
   const handleOpenPackFolder = useCallback(async () => {
@@ -1327,7 +1353,7 @@ export const StoryboardNode = memo(({ id, data, selected, width, height }: Story
             disabled={isAnyExporting}
           >
             <FolderOpen className={NODE_CONTROL_ICON_CLASS} />
-            {isPackingSingleImages ? '打包中...' : '打包下载'}
+            {isPackingSingleImages ? '导出中...' : '导出游戏包'}
           </UiButton>
           <UiButton
             size="sm"

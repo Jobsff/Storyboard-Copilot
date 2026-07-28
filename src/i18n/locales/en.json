@@ -270,6 +270,7 @@
       "actionPlaceholder": "Examples: run cycle, jumping attack, magic attack, hit reaction, idle breathing",
       "promptPreview": "Prompt preview",
       "generate": "Generate Frames",
+      "rerunWithGpt": "Rerun GPT",
       "generating": "Generating...",
       "apiKeyRequired": "Please configure the API key for the selected image model first",
       "generateFailed": "Sequence frame generation failed",

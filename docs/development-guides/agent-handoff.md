@@ -16,7 +16,7 @@
 
 ## 2. 当前稳定基线
 
-- 当前版本：`0.2.5`。
+- 当前版本：`0.2.8`。
 - 主分支：`main`。
 - 发布流程：准备 `docs/releases/vx.y.z.md` 后执行 `npm run release -- patch --notes-file docs/releases/vx.y.z.md`。
 - Windows 安装包由 `.github/workflows/build.yml` 在 tag push 后自动构建并发布到 GitHub Releases。
@@ -27,9 +27,11 @@
 - AI 视频：支持按供应商能力进行文生视频和图生视频。
 - AI 序列帧：支持 `2x2 / 3x3 / 4x4` 网格生成，用户审核后通过顶部工具条「切割动画」进入切割配置。
 - 切割动画：支持行列数、线宽、FPS、透明背景处理、角色居中/基线校准和抽帧。
-- 透明背景策略：不要假设 GPT Image 2 稳定输出真实 Alpha；序列帧默认走纯绿 `#00FF00` 背景，再由切割动画的 chroma key / 白底后处理兜底。
+- 透明背景策略：AI 序列帧默认走纯洋红 `#FF00FF` 背景；切割动画后处理需兼容洋红/绿/蓝 chroma key、白底清理，以及已有 Alpha 但残留 chroma 的帧。
 - 付费生图策略：提交请求不要静默重试；失败后如果已有 job/task id，应继续轮询同一任务，避免重复扣费。
-- Spine 导出：必须输出可被现有导入器重新导入的 `.json + .atlas + .png` 文件包，不应只生成画布预览。
+- 游戏帧导出：优先输出 `frames/ + *_sheet.png + frames.json`，用于游戏开发中的 PNG 序列帧 / sprite sheet 资产链路。
+- Spine 导出：输出 frame-by-frame attachment `.json + .atlas + .png` 文件包，并在导出后创建/验证画布预览节点。
+- 持久化安全：项目保存、删除项目、删除节点都不应自动删除本地图片或 Spine 资产物理文件；磁盘素材清理必须由用户明确手动触发。
 
 ## 4. 修改代码前的定位规则
 
@@ -65,11 +67,13 @@ npm run tauri dev
 - 不要绕过 `nodeRegistry.ts` 手写节点菜单白名单。
 - 不要让 UI 层直接耦合底层 Tauri/API 细节。
 - 不要把 GPT Image 2 真实透明背景当成稳定前提。
-- 不要让 Spine 导出只创建预览节点，必须落盘三件套。
+- 不要把视频/动图当作主游戏资产导出；游戏优先 `frames/ + *_sheet.png + frames.json`，Spine 是 frame-by-frame attachment 三件套。
+- 不要让 Spine 导出只创建预览节点；必须先落盘三件套，再用预览节点验证。
 - 不要把临时测试密钥、截图路径或单次故障流水账写入 `AGENTS.md` / `CLAUDE.md`。
 - 不要在拖拽、缩放、输入中做重持久化或重图片处理。
 - 不要为新弹窗重复手写拖动逻辑，优先用默认可拖动的 `UiModal`。
 - 不要让文件 drop 冒泡到页面级；图片工具箱上传区优先用 `ImageUploadDropZone`。
+- 不要恢复自动图片/资产垃圾回收，避免异步持久化旧快照误删新生成素材。
 
 ## 7. 如果文档和代码冲突
 

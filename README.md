@@ -114,8 +114,9 @@ npm run release -- 0.2.0 "新增分镜批量裁剪工具"
 - AI 图片：支持文生图、图生图、Prompt 工程师和自动反推提示词。
 - AI 视频：支持图生视频与文生视频（按所选供应商/模型能力决定）。
 - AI 序列帧：根据动作关键词生成 2x2 / 3x3 / 4x4 序列帧网格，审核后通过「切割动画」抽帧、抠图并生成动画帧。
-- Spine 工作流：支持导入 Spine 文件包，也支持从序列帧导出 `.json + .atlas + .png` 三件套。
-- 图片工具：支持裁剪、标注、缩放、切割、合并分镜和单帧打包下载。
+- 游戏帧导出：支持从序列帧导出 `frames/ + *_sheet.png + frames.json` 的游戏素材包。
+- Spine 工作流：支持导入 Spine 文件包，也支持从序列帧导出 frame-by-frame attachment `.json + .atlas + .png` 三件套并生成预览节点。
+- 图片工具：支持裁剪、标注、缩放、切割和合并分镜。
 
 ## 项目结构（核心）
 
@@ -170,7 +171,8 @@ docs/development-guides/    # 开发与扩展文档
 - 自动持久化由 `projectStore` 驱动，不需要手动保存
 - SQLite 文件位于 Tauri `app_data_dir/projects.db`
 - `projects` 表核心字段：`nodes_json`、`edges_json`、`viewport_json`、`history_json`、`node_count`
-- 图片字段通过 `imagePool + __img_ref__` 去重编码
+- 图片字段通过 `imagePool + __img_ref__` 去重编码，Spine 资产字段通过 `assetPool + __asset_ref__` 去重编码
+- 删除画布节点或项目只删除项目记录/引用关系，不会自动删除本地图片或 Spine 资产物理文件；用户不需要的素材应由明确的手动清理入口处理
 
 ## i18n 约定
 

@@ -184,6 +184,7 @@ pub fn run() {
             image::copy_image_source_to_clipboard,
             assets::persist_spine_package_files,
             assets::export_sequence_frames_as_spine,
+            assets::export_sequence_frames_as_sprite_pack,
             ai_commands::set_api_key,
             ai_commands::reverse_prompt,
             ai_commands::craft_image_prompt,
