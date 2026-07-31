@@ -395,3 +395,23 @@ export async function setOllamaModel(model: string): Promise<void> {
   if (!isTauri()) return;
   await invoke('set_ollama_model', { model });
 }
+
+/**
+ * Register (or update) a runtime custom NEWAPI-compatible endpoint in the Rust backend.
+ * The provider id should be unique per endpoint (e.g. `newapi_<hash>`); requests whose
+ * model id starts with `${id}/` route to this provider instance.
+ */
+export async function registerCustomEndpoint(
+  id: string,
+  baseUrl: string,
+  apiKey: string
+): Promise<void> {
+  if (!isTauri()) return;
+  await invoke('register_custom_endpoint', { id, baseUrl, apiKey });
+}
+
+/** Remove a previously registered runtime custom endpoint from the Rust backend. */
+export async function removeCustomEndpoint(id: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke('remove_custom_endpoint', { id });
+}

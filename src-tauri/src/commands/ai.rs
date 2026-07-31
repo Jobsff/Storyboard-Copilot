@@ -26,7 +26,7 @@ static ACTIVE_NON_RESUMABLE_JOB_IDS: std::sync::OnceLock<Arc<RwLock<HashSet<Stri
 
 fn get_registry() -> &'static ProviderRegistry {
     REGISTRY.get_or_init(|| {
-        let mut registry = ProviderRegistry::new();
+        let registry = ProviderRegistry::new();
         for provider in build_default_providers() {
             registry.register_provider(provider);
         }
@@ -422,8 +422,85 @@ pub async fn list_provider_models(
             fetch_openai_compatible_models(provider.as_str(), api_key, base_url).await
         }
         "ollama" => fetch_ollama_models(base_url).await,
+        // Custom runtime NEWAPI endpoints use the same OpenAI-compatible /v1/models scheme.
+        id if id.starts_with("newapi_") => {
+            fetch_openai_compatible_models_for_url(id, api_key, base_url).await
+        }
         _ => Err(format!("Unsupported provider: {}", provider)),
     }
+}
+
+#[tauri::command]
+pub async fn register_custom_endpoint(
+    id: String,
+    base_url: String,
+    api_key: String,
+) -> Result<(), String> {
+    info!("Registering custom endpoint: {}", id);
+    let registry = get_registry();
+    let provider = Arc::new(Api666Provider::new_with_config(&id, &base_url));
+    registry.register_custom_provider(id.clone(), provider);
+
+    // Inject API key + base url into the freshly registered provider instance.
+    if let Some(resolved) = registry.get_provider(&id) {
+        if !api_key.trim().is_empty() {
+            resolved.set_api_key(api_key).await.map_err(|e| e.to_string())?;
+        }
+        if let Some(api666) = resolved.as_ref().as_any().downcast_ref::<Api666Provider>() {
+            api666.set_base_url(base_url).await;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn remove_custom_endpoint(id: String) -> Result<(), String> {
+    info!("Removing custom endpoint: {}", id);
+    let registry = get_registry();
+    registry.remove_custom_provider(&id);
+    Ok(())
+}
+
+/// Fetch models from an arbitrary OpenAI-compatible base URL (used by custom endpoints).
+/// Differs from `fetch_openai_compatible_models` only in that it requires an explicit
+/// base URL rather than a hardcoded fallback per provider name.
+async fn fetch_openai_compatible_models_for_url(
+    provider: &str,
+    api_key: String,
+    base_url: Option<String>,
+) -> Result<Vec<String>, String> {
+    let raw = base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("Base URL is required for custom endpoint {}", provider))?;
+    let endpoint = format!("{}/models", normalize_openai_base_url(Some(raw.to_string()), raw));
+    let mut request = reqwest::Client::new().get(&endpoint);
+    if !api_key.trim().is_empty() {
+        request = request.bearer_auth(api_key.trim());
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("Failed to fetch models from {}: {}", provider, error))?;
+    let status = response.status();
+    let raw_text = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        let capped = raw_text.chars().take(1200).collect::<String>();
+        return Err(format!(
+            "{} model list request failed: HTTP {} {}",
+            provider, status, capped
+        ));
+    }
+
+    let value = serde_json::from_str::<Value>(&raw_text)
+        .map_err(|error| format!("Failed to parse {} model list: {}", provider, error))?;
+    let models = collect_remote_model_ids(&value);
+    if models.is_empty() {
+        return Err(format!("{} returned an empty model list", provider));
+    }
+    Ok(models)
 }
 
 #[tauri::command]
@@ -533,7 +610,6 @@ pub async fn submit_generate_image_job(
     let provider = registry
         .resolve_provider_for_model(&request.model)
         .or_else(|| registry.get_default_provider())
-        .cloned()
         .ok_or_else(|| "Provider not found".to_string())?;
 
     let req = GenerateRequest {
@@ -686,7 +762,6 @@ pub async fn get_generate_image_job(
 
     let provider = get_registry()
         .get_provider(record.provider_id.as_str())
-        .cloned()
         .ok_or_else(|| format!("Provider not found for job: {}", record.provider_id))?;
 
     let Some(task_id) = record.external_task_id.clone() else {

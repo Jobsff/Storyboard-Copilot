@@ -13,6 +13,18 @@ export type CanvasEdgeRoutingMode = 'spline' | 'orthogonal' | 'smartOrthogonal';
 export type ProviderApiKeys = Record<string, string>;
 export const DEFAULT_GRSAI_NANO_BANANA_PRO_MODEL = 'nano-banana-pro';
 
+/** A user-defined NEWAPI-compatible (OpenAI-compatible) endpoint. */
+export interface CustomEndpoint {
+  /** Internal routing id, e.g. `newapi_<hash>`. Must start with `newapi_`. */
+  id: string;
+  /** User-facing display name, e.g. "小胡API". */
+  name: string;
+  /** Base URL, e.g. https://picture.aifast.site */
+  baseUrl: string;
+  /** Raw model names selected by the user (without the `${id}/` prefix). */
+  selectedModels: string[];
+}
+
 interface SettingsState {
   isHydrated: boolean;
   apiKeys: ProviderApiKeys;
@@ -43,6 +55,7 @@ interface SettingsState {
   canvasEdgeRoutingMode: CanvasEdgeRoutingMode;
   autoCheckAppUpdateOnLaunch: boolean;
   enableUpdateDialog: boolean;
+  customEndpoints: CustomEndpoint[];
   setHydrated: (hydrated: boolean) => void;
   setProviderApiKey: (providerId: string, key: string) => void;
   setJuyouapiBaseUrl: (url: string) => void;
@@ -72,6 +85,10 @@ interface SettingsState {
   setCanvasEdgeRoutingMode: (mode: CanvasEdgeRoutingMode) => void;
   setAutoCheckAppUpdateOnLaunch: (enabled: boolean) => void;
   setEnableUpdateDialog: (enabled: boolean) => void;
+  addCustomEndpoint: (endpoint: CustomEndpoint) => void;
+  updateCustomEndpoint: (id: string, patch: Partial<Omit<CustomEndpoint, 'id'>>) => void;
+  removeCustomEndpoint: (id: string) => void;
+  setCustomEndpointModels: (id: string, models: string[]) => void;
 }
 
 const HEX_COLOR_PATTERN = /^#?[0-9a-fA-F]{6}$/;
@@ -154,6 +171,47 @@ function normalizeApiKeys(input: ProviderApiKeys | null | undefined): ProviderAp
   }, {});
 }
 
+/** Generate a unique routing id for a custom endpoint. */
+export function generateCustomEndpointId(): string {
+  // 8 hex chars from a random source; prefixed with `newapi_` for routing.
+  const random = Math.random().toString(16).slice(2, 10).padEnd(8, '0');
+  const stamp = Date.now().toString(16).slice(-4);
+  return `newapi_${stamp}${random}`.slice(0, 20);
+}
+
+function normalizeCustomEndpoint(input: unknown): CustomEndpoint | null {
+  if (!input || typeof input !== 'object') return null;
+  const raw = input as Record<string, unknown>;
+  const id = typeof raw.id === 'string' ? raw.id.trim() : '';
+  if (!id.startsWith('newapi_')) return null;
+  const baseUrl = typeof raw.baseUrl === 'string' ? raw.baseUrl.trim() : '';
+  // Allow an empty name while the user is editing (clearing the input box);
+  // a display fallback to the id is applied in the UI, not stored here.
+  const name = typeof raw.name === 'string' ? raw.name : '';
+  const models = Array.isArray(raw.selectedModels)
+    ? raw.selectedModels.filter((m): m is string => typeof m === 'string' && m.trim().length > 0)
+    : [];
+  return {
+    id,
+    name,
+    baseUrl,
+    selectedModels: Array.from(new Set(models)),
+  };
+}
+
+function normalizeCustomEndpoints(input: unknown): CustomEndpoint[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const result: CustomEndpoint[] = [];
+  for (const item of input) {
+    const normalized = normalizeCustomEndpoint(item);
+    if (normalized && seen.add(normalized.id)) {
+      result.push(normalized);
+    }
+  }
+  return result;
+}
+
 export function hasConfiguredApiKey(apiKeys: ProviderApiKeys): boolean {
   return getConfiguredApiKeyCount(apiKeys) > 0;
 }
@@ -203,6 +261,7 @@ export const useSettingsStore = create<SettingsState>()(
       canvasEdgeRoutingMode: 'spline',
       autoCheckAppUpdateOnLaunch: true,
       enableUpdateDialog: true,
+      customEndpoints: [],
       setHydrated: (hydrated) => set({ isHydrated: hydrated }),
       setProviderApiKey: (providerId, key) =>
         set((state) => ({
@@ -259,10 +318,39 @@ export const useSettingsStore = create<SettingsState>()(
         set({ canvasEdgeRoutingMode: normalizeCanvasEdgeRoutingMode(canvasEdgeRoutingMode) }),
       setAutoCheckAppUpdateOnLaunch: (enabled) => set({ autoCheckAppUpdateOnLaunch: enabled }),
       setEnableUpdateDialog: (enabled) => set({ enableUpdateDialog: enabled }),
+      addCustomEndpoint: (endpoint) =>
+        set((state) => {
+          if (state.customEndpoints.some((item) => item.id === endpoint.id)) {
+            return state;
+          }
+          const normalized = normalizeCustomEndpoint(endpoint);
+          if (!normalized) return state;
+          return { customEndpoints: [...state.customEndpoints, normalized] };
+        }),
+      updateCustomEndpoint: (id, patch) =>
+        set((state) => ({
+          customEndpoints: state.customEndpoints.map((item) => {
+            if (item.id !== id) return item;
+            const normalized = normalizeCustomEndpoint({ ...item, ...patch, id });
+            return normalized ?? item;
+          }),
+        })),
+      removeCustomEndpoint: (id) =>
+        set((state) => ({
+          customEndpoints: state.customEndpoints.filter((item) => item.id !== id),
+        })),
+      setCustomEndpointModels: (id, models) =>
+        set((state) => ({
+          customEndpoints: state.customEndpoints.map((item) =>
+            item.id === id
+              ? { ...item, selectedModels: Array.from(new Set(models)) }
+              : item
+          ),
+        })),
     }),
     {
       name: 'settings-storage',
-      version: 15,
+      version: 17,
       onRehydrateStorage: () => {
         return (state, error) => {
           if (error) {
@@ -289,6 +377,17 @@ export const useSettingsStore = create<SettingsState>()(
               }
             });
           }
+          // Sync custom NEWAPI endpoints to Rust backend on hydration
+          const endpoints = state?.customEndpoints ?? [];
+          if (endpoints.length > 0) {
+            import('@/commands/ai').then(({ registerCustomEndpoint }) => {
+              const apiKeys = state?.apiKeys ?? {};
+              endpoints.forEach((endpoint) => {
+                const key = apiKeys[endpoint.id] ?? '';
+                registerCustomEndpoint(endpoint.id, endpoint.baseUrl, key).catch(() => {});
+              });
+            });
+          }
         };
       },
       migrate: (persistedState: unknown) => {
@@ -309,6 +408,7 @@ export const useSettingsStore = create<SettingsState>()(
           usdToCnyRate?: number | string;
           preferDiscountedPrice?: boolean;
           grsaiCreditTierId?: GrsaiCreditTierId | string;
+          customEndpoints?: unknown;
         };
 
         const migratedApiKeys = normalizeApiKeys(state.apiKeys);
@@ -368,6 +468,7 @@ export const useSettingsStore = create<SettingsState>()(
             aiAssistantProvider: (state as { aiAssistantProvider?: string }).aiAssistantProvider ?? '666api',
             aiAssistantModel: (state as { aiAssistantModel?: string }).aiAssistantModel ?? '',
             lastUsedImageModel: (state as { lastUsedImageModel?: string }).lastUsedImageModel ?? '',
+            customEndpoints: normalizeCustomEndpoints(state.customEndpoints),
           };
         }
 
@@ -399,6 +500,7 @@ export const useSettingsStore = create<SettingsState>()(
           ollamaModel: (state as { ollamaModel?: string }).ollamaModel ?? '',
           aiAssistantProvider: (state as { aiAssistantProvider?: string }).aiAssistantProvider ?? '666api',
           lastUsedImageModel: (state as { lastUsedImageModel?: string }).lastUsedImageModel ?? '',
+          customEndpoints: normalizeCustomEndpoints(state.customEndpoints),
         };
       },
     }

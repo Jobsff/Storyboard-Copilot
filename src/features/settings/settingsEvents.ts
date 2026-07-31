@@ -1,5 +1,6 @@
 export type SettingsCategory =
   | 'providers'
+  | 'customEndpoints'
   | 'pricing'
   | 'appearance'
   | 'general'

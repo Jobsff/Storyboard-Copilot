@@ -357,6 +357,7 @@
     "title": "Settings",
     "providers": "API Key",
     "providersDesc": "Configure AI provider API keys",
+    "customEndpoints": "Custom Endpoint",
     "pricing": "Pricing",
     "pricingDesc": "Manage node price display, exchange rate conversion, and credit-pack estimates.",
     "providerGuideText": "Different providers vary in model capability, queue speed, stability, and pricing. Switch providers based on your task, and follow each provider's recommended parameters.",

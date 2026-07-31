@@ -7,11 +7,19 @@ import remarkBreaks from 'remark-breaks';
 import { getVersion } from '@tauri-apps/api/app';
 import { open } from '@tauri-apps/plugin-dialog';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { useSettingsStore } from '@/stores/settingsStore';
+import {
+  useSettingsStore,
+  generateCustomEndpointId,
+  type CustomEndpoint,
+} from '@/stores/settingsStore';
 import { UiCheckbox, UiSelect } from '@/components/ui';
 import { UI_CONTENT_OVERLAY_INSET_CLASS, UI_DIALOG_TRANSITION_MS } from '@/components/ui/motion';
 import { useDialogTransition } from '@/components/ui/useDialogTransition';
-import { listModelProviders } from '@/features/canvas/models';
+import {
+  listModelProviders,
+  registerRuntimeEndpoint,
+  unregisterRuntimeEndpoint,
+} from '@/features/canvas/models';
 import { GRSAI_NANO_BANANA_PRO_MODEL_OPTIONS } from '@/features/canvas/models/providers/grsai';
 import { API666_KEY_GROUPS } from '@/features/canvas/models/providers/api666';
 import { provider as juyouapiProvider } from '@/features/canvas/models/providers/juyouapi';
@@ -21,6 +29,8 @@ import {
   setJuyouapiBaseUrl as invokeSetJuyouapiBaseUrl,
   setOllamaBaseUrl as invokeSetOllamaBaseUrl,
   setOllamaModel as invokeSetOllamaModel,
+  registerCustomEndpoint as invokeRegisterCustomEndpoint,
+  removeCustomEndpoint as invokeRemoveCustomEndpoint,
 } from '@/commands/ai';
 import { GRSAI_CREDIT_TIERS } from '@/features/canvas/pricing/types';
 import providerGuideMarkdown from '../../docs/settings/provider-guide.md?raw';
@@ -156,6 +166,7 @@ export function SettingsDialog({
     canvasEdgeRoutingMode,
     autoCheckAppUpdateOnLaunch,
     enableUpdateDialog,
+    customEndpoints,
     setProviderApiKey,
     setJuyouapiBaseUrl,
     setOllamaBaseUrl,
@@ -182,6 +193,10 @@ export function SettingsDialog({
     setCanvasEdgeRoutingMode,
     setAutoCheckAppUpdateOnLaunch,
     setEnableUpdateDialog,
+    addCustomEndpoint,
+    updateCustomEndpoint,
+    removeCustomEndpoint,
+    setCustomEndpointModels,
   } = useSettingsStore();
   const providers = useMemo(() => {
     const providerOrder = ['kie', 'ppio', 'fal', 'grsai'];
@@ -241,6 +256,10 @@ export function SettingsDialog({
   const [assistantModelOptions, setAssistantModelOptions] = useState<string[]>([]);
   const [assistantModelFetchStatus, setAssistantModelFetchStatus] = useState<ModelFetchStatus>('');
   const [assistantModelFetchMessage, setAssistantModelFetchMessage] = useState('');
+  // Per-endpoint fetched model list + fetch status, keyed by endpoint id.
+  const [endpointFetchedModels, setEndpointFetchedModels] = useState<Record<string, string[]>>({});
+  const [endpointFetchStatus, setEndpointFetchStatus] = useState<Record<string, ModelFetchStatus>>({});
+  const [endpointFetchMessage, setEndpointFetchMessage] = useState<Record<string, string>>({});
   const { shouldRender, isVisible } = useDialogTransition(isOpen, UI_DIALOG_TRANSITION_MS);
 
   useEffect(() => {
@@ -501,6 +520,118 @@ export function SettingsDialog({
     localOllamaBaseUrl,
   ]);
 
+  // --- Custom NEWAPI endpoint handlers ---------------------------------------
+
+  const handleAddCustomEndpoint = useCallback(() => {
+    const id = generateCustomEndpointId();
+    const endpoint: CustomEndpoint = {
+      id,
+      name: '',
+      baseUrl: '',
+      selectedModels: [],
+    };
+    addCustomEndpoint(endpoint);
+    // Nothing to sync to Rust yet (no base URL / key).
+  }, [addCustomEndpoint]);
+
+  const handleUpdateCustomEndpoint = useCallback(
+    (id: string, patch: Partial<Omit<CustomEndpoint, 'id'>>) => {
+      updateCustomEndpoint(id, patch);
+      // Refresh the runtime registry so display name changes reflect in the picker.
+      const updated = useSettingsStore
+        .getState()
+        .customEndpoints.find((item) => item.id === id);
+      if (updated) {
+        const merged = { ...updated, ...patch };
+        if (merged.baseUrl && merged.selectedModels.length > 0) {
+          registerRuntimeEndpoint(merged);
+        }
+      }
+    },
+    [updateCustomEndpoint]
+  );
+
+  const handleRemoveCustomEndpoint = useCallback(
+    (id: string) => {
+      removeCustomEndpoint(id);
+      unregisterRuntimeEndpoint(id);
+      invokeRemoveCustomEndpoint(id).catch(() => {});
+      setEndpointFetchedModels((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setEndpointFetchStatus((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      // Also clear the stored key for this endpoint.
+      setProviderApiKey(id, '');
+    },
+    [removeCustomEndpoint, setProviderApiKey]
+  );
+
+  const handleFetchEndpointModels = useCallback(
+    async (endpoint: CustomEndpoint) => {
+      const baseUrl = endpoint.baseUrl.trim();
+      const apiKey = (localApiKeys[endpoint.id] ?? '').trim();
+      if (!baseUrl) {
+        setEndpointFetchStatus((prev) => ({ ...prev, [endpoint.id]: 'error' }));
+        setEndpointFetchMessage((prev) => ({
+          ...prev,
+          [endpoint.id]: i18n.language.startsWith('zh') ? '请先填写接口地址。' : 'Please enter the base URL first.',
+        }));
+        return;
+      }
+      if (!apiKey) {
+        setEndpointFetchStatus((prev) => ({ ...prev, [endpoint.id]: 'error' }));
+        setEndpointFetchMessage((prev) => ({
+          ...prev,
+          [endpoint.id]: i18n.language.startsWith('zh') ? '请先填写 API 密钥。' : 'Please enter the API key first.',
+        }));
+        return;
+      }
+      setEndpointFetchStatus((prev) => ({ ...prev, [endpoint.id]: 'loading' }));
+      setEndpointFetchMessage((prev) => ({ ...prev, [endpoint.id]: '' }));
+      try {
+        const models = await listProviderModels(endpoint.id, apiKey, baseUrl);
+        setEndpointFetchedModels((prev) => ({ ...prev, [endpoint.id]: models }));
+        setEndpointFetchStatus((prev) => ({ ...prev, [endpoint.id]: 'success' }));
+        setEndpointFetchMessage((prev) => ({
+          ...prev,
+          [endpoint.id]: i18n.language.startsWith('zh')
+            ? `已获取 ${models.length} 个模型，勾选需要的即可。`
+            : `Loaded ${models.length} models. Check the ones you need.`,
+        }));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setEndpointFetchedModels((prev) => ({ ...prev, [endpoint.id]: [] }));
+        setEndpointFetchStatus((prev) => ({ ...prev, [endpoint.id]: 'error' }));
+        setEndpointFetchMessage((prev) => ({ ...prev, [endpoint.id]: message }));
+      }
+    },
+    [i18n.language, localApiKeys]
+  );
+
+  const handleToggleEndpointModel = useCallback(
+    (endpoint: CustomEndpoint, modelName: string) => {
+      const isSelected = endpoint.selectedModels.includes(modelName);
+      const nextModels = isSelected
+        ? endpoint.selectedModels.filter((m) => m !== modelName)
+        : [...endpoint.selectedModels, modelName];
+      setCustomEndpointModels(endpoint.id, nextModels);
+      const updated: CustomEndpoint = { ...endpoint, selectedModels: nextModels };
+      if (updated.baseUrl) {
+        registerRuntimeEndpoint(updated);
+        invokeRegisterCustomEndpoint(endpoint.id, endpoint.baseUrl, localApiKeys[endpoint.id] ?? '').catch(
+          () => {}
+        );
+      }
+    },
+    [localApiKeys, setCustomEndpointModels]
+  );
+
   const handleMarkdownLinkClick = useCallback((href?: string) => {
     if (!href) {
       return;
@@ -566,6 +697,20 @@ export function SettingsDialog({
               </button>
 
               <button
+                onClick={() => setActiveCategory('customEndpoints')}
+                className={`
+                w-full flex items-center gap-3 px-4 py-2.5 text-left
+                transition-colors
+                ${activeCategory === 'customEndpoints'
+                    ? 'bg-accent/10 text-text-dark border-l-2 border-accent'
+                    : 'text-text-muted hover:bg-bg-dark hover:text-text-dark'
+                  }
+              `}
+              >
+                <span className="text-sm">{t('settings.customEndpoints')}</span>
+              </button>
+
+              <button
                 onClick={() => setActiveCategory('appearance')}
                 className={`
                 w-full flex items-center gap-3 px-4 py-2.5 text-left
@@ -625,6 +770,190 @@ export function SettingsDialog({
 
           {/* Content */}
           <div className="flex-1 flex flex-col">
+            {activeCategory === 'customEndpoints' && (
+              <>
+                <div className="px-6 py-5 border-b border-border-dark flex items-center justify-between">
+                  <div>
+                    <h2 className="text-lg font-semibold text-text-dark">
+                      {t('settings.customEndpoints')}
+                    </h2>
+                    <p className="text-xs text-text-muted mt-1">
+                      {i18n.language.startsWith('zh')
+                        ? '添加任意 NewAPI / OpenAI 兼容接口，获取并勾选需要的模型即可在画布使用。'
+                        : 'Add any NewAPI / OpenAI-compatible endpoint, fetch and check the models you need.'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleAddCustomEndpoint}
+                    className="flex items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-3 py-1.5 text-sm text-text-dark hover:bg-bg-dark transition-colors"
+                  >
+                    <Plus className="h-4 w-4" />
+                    {i18n.language.startsWith('zh') ? '添加接口' : 'Add endpoint'}
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+                  {customEndpoints.length === 0 && (
+                    <div className="rounded-lg border border-dashed border-border-dark p-6 text-center text-sm text-text-muted">
+                      {i18n.language.startsWith('zh')
+                        ? '尚未添加自定义接口。点击右上角「添加接口」开始。'
+                        : 'No custom endpoints yet. Click "Add endpoint" to start.'}
+                    </div>
+                  )}
+
+                  {customEndpoints.map((endpoint) => {
+                    const fetchedModels = endpointFetchedModels[endpoint.id] ?? [];
+                    const fetchStatus = endpointFetchStatus[endpoint.id] ?? '';
+                    const fetchMessage = endpointFetchMessage[endpoint.id] ?? '';
+                    return (
+                      <div
+                        key={endpoint.id}
+                        className="rounded-lg border border-border-dark bg-bg-dark p-4 space-y-3"
+                      >
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-sm font-medium text-text-dark">
+                            {endpoint.name || (i18n.language.startsWith('zh') ? '未命名接口' : 'Untitled endpoint')}
+                          </h3>
+                          <button
+                            onClick={() => handleRemoveCustomEndpoint(endpoint.id)}
+                            className="rounded p-1 text-text-muted hover:bg-surface-dark hover:text-red-400 transition-colors"
+                            title={i18n.language.startsWith('zh') ? '删除' : 'Delete'}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <div className="mb-1 text-xs font-medium text-text-muted">
+                              {i18n.language.startsWith('zh') ? '名称' : 'Name'}
+                            </div>
+                            <input
+                              type="text"
+                              value={endpoint.name}
+                              onChange={(e) =>
+                                handleUpdateCustomEndpoint(endpoint.id, { name: e.target.value })
+                              }
+                              placeholder={i18n.language.startsWith('zh') ? '如：小胡API' : 'e.g. XiaoHu API'}
+                              className="w-full rounded border border-border-dark bg-surface-dark px-3 py-2 text-sm text-text-dark placeholder:text-text-muted"
+                            />
+                          </div>
+                          <div>
+                            <div className="mb-1 text-xs font-medium text-text-muted">
+                              {i18n.language.startsWith('zh') ? '接口地址' : 'Base URL'}
+                            </div>
+                            <input
+                              type="text"
+                              value={endpoint.baseUrl}
+                              onChange={(e) => {
+                                const url = e.target.value;
+                                handleUpdateCustomEndpoint(endpoint.id, { baseUrl: url });
+                              }}
+                              onBlur={() => {
+                                if (endpoint.baseUrl.trim() && localApiKeys[endpoint.id]) {
+                                  invokeRegisterCustomEndpoint(
+                                    endpoint.id,
+                                    endpoint.baseUrl.trim(),
+                                    localApiKeys[endpoint.id] ?? ''
+                                  ).catch(() => {});
+                                }
+                              }}
+                              placeholder="https://picture.aifast.site"
+                              className="w-full rounded border border-border-dark bg-surface-dark px-3 py-2 text-sm text-text-dark placeholder:text-text-muted"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="mb-1 text-xs font-medium text-text-muted">
+                            {t('settings.enterApiKey')}
+                          </div>
+                          <div className="relative">
+                            <input
+                              type={Boolean(revealedApiKeys[endpoint.id]) ? 'text' : 'password'}
+                              value={localApiKeys[endpoint.id] ?? ''}
+                              onChange={(event) => {
+                                const nextValue = event.target.value;
+                                setLocalApiKeys((previous) => ({
+                                  ...previous,
+                                  [endpoint.id]: nextValue,
+                                }));
+                                setProviderApiKey(endpoint.id, nextValue);
+                              }}
+                              placeholder={t('settings.enterApiKey')}
+                              className="w-full rounded border border-border-dark bg-surface-dark px-3 py-2 pr-10 text-sm text-text-dark placeholder:text-text-muted"
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setRevealedApiKeys((previous) => ({
+                                  ...previous,
+                                  [endpoint.id]: !previous[endpoint.id],
+                                }))
+                              }
+                              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 hover:bg-bg-dark"
+                            >
+                              {revealedApiKeys[endpoint.id] ? (
+                                <EyeOff className="h-4 w-4 text-text-muted" />
+                              ) : (
+                                <Eye className="h-4 w-4 text-text-muted" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleFetchEndpointModels(endpoint)}
+                            disabled={fetchStatus === 'loading'}
+                            className="flex items-center gap-1.5 rounded border border-border-dark bg-surface-dark px-3 py-1.5 text-sm text-text-dark hover:bg-bg-dark transition-colors disabled:opacity-50"
+                          >
+                            <RefreshCw className={`h-4 w-4 ${fetchStatus === 'loading' ? 'animate-spin' : ''}`} />
+                            {i18n.language.startsWith('zh') ? '获取模型' : 'Fetch models'}
+                          </button>
+                          {fetchStatus === 'success' && (
+                            <span className="text-xs text-green-400">
+                              {i18n.language.startsWith('zh')
+                                ? `已勾选 ${endpoint.selectedModels.length} / ${fetchedModels.length}`
+                                : `${endpoint.selectedModels.length} / ${fetchedModels.length} selected`}
+                            </span>
+                          )}
+                        </div>
+
+                        {fetchMessage && (
+                          <div
+                            className={`text-xs ${fetchStatus === 'error' ? 'text-red-400' : 'text-text-muted'}`}
+                          >
+                            {fetchMessage}
+                          </div>
+                        )}
+
+                        {fetchedModels.length > 0 && (
+                          <div className="rounded border border-border-dark bg-surface-dark p-2 max-h-48 overflow-y-auto space-y-1">
+                            {fetchedModels.map((modelName) => {
+                              const checked = endpoint.selectedModels.includes(modelName);
+                              return (
+                                <label
+                                  key={modelName}
+                                  className="flex items-center gap-2 px-2 py-1 rounded hover:bg-bg-dark cursor-pointer"
+                                >
+                                  <UiCheckbox
+                                    checked={checked}
+                                    onCheckedChange={() => handleToggleEndpointModel(endpoint, modelName)}
+                                  />
+                                  <span className="text-sm text-text-dark">{modelName}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
             {activeCategory === 'providers' && (
               <>
                 <div className="px-6 py-5 border-b border-border-dark">

@@ -53,6 +53,7 @@ import {
   getImageModel,
   listModelProviders,
   resolveImageModelResolution,
+  syncCustomEndpointsFromStore,
 } from '@/features/canvas/models';
 import { API666_GPT_IMAGE_2_MODEL_ID } from '@/features/canvas/models/image/api666/gptImage2';
 import { resolve666ApiKey, API666_KEY_GROUPS } from '@/features/canvas/models/providers/api666';
@@ -320,6 +321,7 @@ export function Canvas() {
   const closeImageViewer = useCanvasStore((state) => state.closeImageViewer);
   const navigateImageViewer = useCanvasStore((state) => state.navigateImageViewer);
   const apiKeys = useSettingsStore((state) => state.apiKeys);
+  const customEndpoints = useSettingsStore((state) => state.customEndpoints);
   const providerIds = useMemo(() => {
     const baseIds = listModelProviders().map((provider) => provider.id);
     return baseIds.flatMap((id) => id === '666api' ? API666_KEY_GROUPS.map((g) => g.id) : [id]);
@@ -327,6 +329,12 @@ export function Canvas() {
   const configuredApiKeyCount = useSettingsStore((state) =>
     getConfiguredApiKeyCount(state.apiKeys, providerIds)
   );
+
+  // Reconcile runtime custom-endpoint providers/models whenever the persisted
+  // customEndpoints change, so the canvas model pickers stay in sync.
+  useEffect(() => {
+    syncCustomEndpointsFromStore(customEndpoints);
+  }, [customEndpoints]);
 
   const getCurrentProject = useProjectStore((state) => state.getCurrentProject);
   const saveCurrentProject = useProjectStore((state) => state.saveCurrentProject);

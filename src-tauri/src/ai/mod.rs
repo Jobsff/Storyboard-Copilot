@@ -2,7 +2,7 @@ pub mod error;
 pub mod providers;
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tracing::info;
 
 use error::AIError;
@@ -101,57 +101,103 @@ pub trait AIProvider: Send + Sync {
 }
 
 pub struct ProviderRegistry {
-    providers: HashMap<String, Arc<dyn AIProvider>>,
-    default_provider: Option<String>,
+    providers: RwLock<HashMap<String, Arc<dyn AIProvider>>>,
+    default_provider: RwLock<Option<String>>,
 }
 
 impl ProviderRegistry {
     pub fn new() -> Self {
         Self {
-            providers: HashMap::new(),
-            default_provider: None,
+            providers: RwLock::new(HashMap::new()),
+            default_provider: RwLock::new(None),
         }
     }
 
-    pub fn register_provider(&mut self, provider: Arc<dyn AIProvider>) {
+    pub fn register_provider(&self, provider: Arc<dyn AIProvider>) {
         let name = provider.name().to_string();
         info!("Registering AI provider: {}", name);
-        self.providers.insert(name.clone(), provider);
-        if self.default_provider.is_none() {
-            self.default_provider = Some(name);
+        let mut providers = self.providers.write().expect("provider registry poisoned");
+        providers.insert(name.clone(), provider);
+        let mut default = self.default_provider.write().expect("provider registry poisoned");
+        if default.is_none() {
+            *default = Some(name);
         }
     }
 
-    pub fn get_provider(&self, name: &str) -> Option<&Arc<dyn AIProvider>> {
-        self.providers.get(name)
+    /// Register a runtime custom provider. Returns the provider id used.
+    pub fn register_custom_provider(&self, id: String, provider: Arc<dyn AIProvider>) {
+        info!("Registering custom provider: {}", id);
+        let mut providers = self.providers.write().expect("provider registry poisoned");
+        providers.insert(id, provider);
     }
 
-    pub fn get_default_provider(&self) -> Option<&Arc<dyn AIProvider>> {
-        self.default_provider
-            .as_ref()
-            .and_then(|name| self.providers.get(name))
+    /// Remove a runtime custom provider by id. Returns true if it was present.
+    pub fn remove_custom_provider(&self, id: &str) -> bool {
+        info!("Removing custom provider: {}", id);
+        let mut providers = self.providers.write().expect("provider registry poisoned");
+        providers.remove(id).is_some()
+    }
+
+    /// Look up a provider and apply a closure to it (sync read lock held during the call).
+    pub fn with_provider<R>(
+        &self,
+        name: &str,
+        f: impl FnOnce(&Arc<dyn AIProvider>) -> R,
+    ) -> Option<R> {
+        let providers = self.providers.read().expect("provider registry poisoned");
+        providers.get(name).map(f)
+    }
+
+    pub fn get_provider(&self, name: &str) -> Option<Arc<dyn AIProvider>> {
+        self.providers
+            .read()
+            .expect("provider registry poisoned")
+            .get(name)
+            .cloned()
+    }
+
+    pub fn get_default_provider(&self) -> Option<Arc<dyn AIProvider>> {
+        let name = self
+            .default_provider
+            .read()
+            .expect("provider registry poisoned")
+            .clone()?;
+        self.providers
+            .read()
+            .expect("provider registry poisoned")
+            .get(&name)
+            .cloned()
     }
 
     pub fn list_providers(&self) -> Vec<String> {
-        let mut providers = self.providers.keys().cloned().collect::<Vec<String>>();
+        let mut providers = self
+            .providers
+            .read()
+            .expect("provider registry poisoned")
+            .keys()
+            .cloned()
+            .collect::<Vec<String>>();
         providers.sort();
         providers
     }
 
-    pub fn resolve_provider_for_model(&self, model: &str) -> Option<&Arc<dyn AIProvider>> {
+    pub fn resolve_provider_for_model(&self, model: &str) -> Option<Arc<dyn AIProvider>> {
+        let providers = self.providers.read().expect("provider registry poisoned");
         if let Some((provider_id, _)) = model.split_once('/') {
-            if let Some(provider) = self.providers.get(provider_id) {
-                return Some(provider);
+            if let Some(provider) = providers.get(provider_id) {
+                return Some(provider.clone());
             }
         }
-
-        self.providers
+        providers
             .values()
             .find(|provider| provider.supports_model(model))
+            .cloned()
     }
 
     pub fn supports_model(&self, model: &str) -> bool {
         self.providers
+            .read()
+            .expect("provider registry poisoned")
             .values()
             .any(|provider| provider.supports_model(model))
     }
@@ -162,6 +208,8 @@ impl ProviderRegistry {
 
         for model in self
             .providers
+            .read()
+            .expect("provider registry poisoned")
             .values()
             .flat_map(|provider| provider.list_models())
         {

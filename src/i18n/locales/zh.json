@@ -357,6 +357,7 @@
     "title": "设置",
     "providers": "密钥",
     "providersDesc": "配置 AI 服务商的 API 密钥",
+    "customEndpoints": "自定义接口",
     "pricing": "价格",
     "pricingDesc": "管理节点价格展示、汇率换算和积分套餐估算。",
     "providerGuideText": "不同供应商在模型能力、队列速度、稳定性和价格上可能有差异。建议按当前任务场景切换供应商，并优先使用对应官方文档中的推荐参数。",
