@@ -43,6 +43,7 @@ import {
   getRuntimeDiagnostics,
   type GenerationDebugContext,
 } from '@/features/canvas/application/generationErrorReport';
+import { buildAutoImageFallback, injectChainApiKeys } from '@/features/canvas/application/imageFallback';
 import {
   sanitizeStoryboardPromptText,
   sanitizeStoryboardText,
@@ -64,6 +65,7 @@ import { GRSAI_NANO_BANANA_PRO_MODEL_ID } from '@/features/canvas/models/image/g
 import { FAL_NANO_BANANA_2_MODEL_ID } from '@/features/canvas/models/image/fal/nanoBanana2';
 import { KIE_NANO_BANANA_2_MODEL_ID } from '@/features/canvas/models/image/kie/nanoBanana2';
 import { API666_GPT_IMAGE_2_MODEL_ID } from '@/features/canvas/models/image/api666/gptImage2';
+import { AUTO_PROVIDER_ID } from '@/features/canvas/models/image/auto/autoCapabilities';
 import { resolve666ApiKey } from '@/features/canvas/models/providers/api666';
 import { resolveModelPriceDisplay } from '@/features/canvas/pricing';
 import {
@@ -1068,7 +1070,19 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
       return;
     }
 
-    if (!providerApiKey) {
+    // 智能出图（auto/*）不绑定单一渠道 key：改查降级链可用渠道，空链直接拦截。
+    const isAutoModel = selectedModel.providerId === AUTO_PROVIDER_ID;
+    const autoFallback = isAutoModel
+      ? buildAutoImageFallback(selectedModel.id, apiKeys, useSettingsStore.getState())
+      : null;
+    if (isAutoModel && !autoFallback) {
+      const errorMessage = t('ai.chainKeyRequired');
+      setError(errorMessage);
+      void showErrorDialog(errorMessage, '错误');
+      return;
+    }
+
+    if (!isAutoModel && !providerApiKey) {
       const errorMessage = '请在设置中填写 API Key';
       setError(errorMessage);
       void showErrorDialog(errorMessage, '错误');
@@ -1109,7 +1123,12 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
     setError(null);
 
     try {
-      await canvasAiGateway.setApiKey(selectedModel.providerId, providerApiKey);
+      if (!isAutoModel) {
+        await canvasAiGateway.setApiKey(selectedModel.providerId, providerApiKey);
+      } else if (autoFallback) {
+        // 链任务 hop 会换渠道：提交前把链内所有渠道 key 预注入 Rust
+        await injectChainApiKeys(apiKeys, autoFallback.availableProviders);
+      }
 
       const finalPrompt =
         selectedModel.id === API666_GPT_IMAGE_2_MODEL_ID &&
@@ -1142,6 +1161,12 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
         aspectRatio: resolvedRequestAspectRatio,
         referenceImages: allReferenceImages,
         extraParams: effectiveExtraParams,
+        fallback: autoFallback
+          ? {
+            quality: autoFallback.quality,
+            availableProviders: autoFallback.availableProviders,
+          }
+          : undefined,
       });
       const generationDebugContext: GenerationDebugContext = {
         sourceType: 'storyboardGen',
@@ -1210,6 +1235,7 @@ export const StoryboardGenNode = memo(({ id, data, selected, width, height }: St
       });
     }
   }, [
+    apiKeys,
     providerApiKey,
     nodeData,
     incomingImages,

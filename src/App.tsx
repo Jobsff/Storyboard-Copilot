@@ -53,6 +53,7 @@ function App() {
 
   const isHydrated = useProjectStore((state) => state.isHydrated);
   const hydrate = useProjectStore((state) => state.hydrate);
+  const settingsHydrated = useSettingsStore((state) => state.isHydrated);
   const currentProjectId = useProjectStore((state) => state.currentProjectId);
   const currentPage = useProjectStore((state) => state.currentPage);
   const setCurrentPage = useProjectStore((state) => state.setCurrentPage);
@@ -90,6 +91,36 @@ function App() {
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
+
+  useEffect(() => {
+    // 启动静默探活（模块 C）：autoProbeOnLaunch 开启时后台探一次渠道健康，
+    // 零生成费用；失败仅 console.warn，不打扰用户。等设置 hydrate 完成再拿 key 快照。
+    if (!settingsHydrated) {
+      return;
+    }
+    void (async () => {
+      try {
+        const { isTauri } = await import('@tauri-apps/api/core');
+        if (!isTauri()) {
+          return;
+        }
+        const { useSettingsStore } = await import('@/stores/settingsStore');
+        const { probeAllChannels } = await import('@/features/canvas/application/imageFallback');
+        const settings = useSettingsStore.getState();
+        if (!settings.autoProbeOnLaunch) {
+          return;
+        }
+        await probeAllChannels({
+          apiKeys: settings.apiKeys,
+          juyouapiBaseUrl: settings.juyouapiBaseUrl,
+          ollamaBaseUrl: settings.ollamaBaseUrl,
+          customEndpoints: settings.customEndpoints,
+        });
+      } catch (error) {
+        console.warn('[App] silent channel probe on launch failed', error);
+      }
+    })();
+  }, [settingsHydrated]);
 
   useEffect(() => {
     const unsubscribe = subscribeOpenGlobalErrorDialog((detail) => {
@@ -259,6 +290,7 @@ function App() {
           message={globalError?.message ?? ''}
           details={globalError?.details}
           copyText={globalError?.copyText}
+          actions={globalError?.actions}
           onClose={() => setGlobalError(null)}
         />
       </div>

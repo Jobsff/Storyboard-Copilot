@@ -24,6 +24,9 @@ pub fn build_default_providers() -> Vec<Arc<dyn AIProvider>> {
     vec![
         Arc::new(Api666Provider::new()),
         Arc::new(ApiJuyouProvider::new_with_config("juyouapi", "")),
+        // aifast：NEWAPI 兼容中转站，base 固定（照 juyouapi 注册模式复用 Api666Provider）。
+        // provider_id != "666api" → gemini 系模型自动走 /v1/chat/completions。
+        Arc::new(Api666Provider::new_with_config("aifast", "https://picture.aifast.site")),
         Arc::new(AgnesProvider::new()),
         Arc::new(PPIOProvider::new()),
         Arc::new(GrsaiProvider::new()),

@@ -38,7 +38,7 @@ pub struct FalProvider {
 impl FalProvider {
     pub fn new() -> Self {
         Self {
-            client: Client::new(),
+            client: crate::ai::http::http_client().clone(),
             api_key: Arc::new(RwLock::new(None)),
         }
     }

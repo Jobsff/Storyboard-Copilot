@@ -21,6 +21,7 @@ import {
   type GenerationDebugContext,
   getRuntimeDiagnostics,
 } from '@/features/canvas/application/generationErrorReport';
+import { buildAutoImageFallback, injectChainApiKeys } from '@/features/canvas/application/imageFallback';
 import {
   DEFAULT_IMAGE_MODEL_ID,
   getImageModel,
@@ -29,6 +30,7 @@ import {
   resolveImageModelResolutions,
 } from '@/features/canvas/models';
 import { API666_GPT_IMAGE_2_MODEL_ID } from '@/features/canvas/models/image/api666/gptImage2';
+import { AUTO_PROVIDER_ID } from '@/features/canvas/models/image/auto/autoCapabilities';
 import { resolve666ApiKey } from '@/features/canvas/models/providers/api666';
 import { NodeHeader, NODE_HEADER_FLOATING_POSITION_CLASS } from '@/features/canvas/ui/NodeHeader';
 import { NodeResizeHandle } from '@/features/canvas/ui/NodeResizeHandle';
@@ -412,7 +414,19 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
       extraParams: runExtraParams,
     });
 
-    if (!runApiKey && runModel.providerId !== 'ollama') {
+    // 智能出图（auto/*）不绑定单一渠道 key：改查降级链可用渠道，空链直接拦截。
+    const runIsAutoModel = runModel.providerId === AUTO_PROVIDER_ID;
+    const runFallback = runIsAutoModel
+      ? buildAutoImageFallback(runModel.id, apiKeys, useSettingsStore.getState())
+      : null;
+    if (runIsAutoModel && !runFallback) {
+      const message = t('ai.chainKeyRequired');
+      setError(message);
+      await showErrorDialog(message, t('common.error'));
+      return;
+    }
+
+    if (!runApiKey && runModel.providerId !== 'ollama' && !runIsAutoModel) {
       const message = t('node.sequenceFrameGen.apiKeyRequired');
       setError(message);
       await showErrorDialog(message, t('common.error'));
@@ -436,7 +450,12 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
         generationStatus: t('node.sequenceFrameGen.statusGeneratingImage'),
       });
 
-      await canvasAiGateway.setApiKey(runModel.providerId, runApiKey);
+      if (!runIsAutoModel) {
+        await canvasAiGateway.setApiKey(runModel.providerId, runApiKey);
+      } else if (runFallback) {
+        // 链任务 hop 会换渠道：提交前把链内所有渠道 key 预注入 Rust
+        await injectChainApiKeys(apiKeys, runFallback.availableProviders);
+      }
       const requestResolution = runModel.resolveRequest({
         referenceImageCount: incomingImages.length,
       });
@@ -447,6 +466,12 @@ export const SequenceFrameGenNode = memo(function SequenceFrameGenNode({
         aspectRatio: DEFAULT_ASPECT_RATIO,
         referenceImages: incomingImages,
         extraParams: runExtraParams,
+        fallback: runFallback
+          ? {
+            quality: runFallback.quality,
+            availableProviders: runFallback.availableProviders,
+          }
+          : undefined,
       });
       const frameNotes = buildFrameNotes(currentAction, gridFrameCount);
       const generationDebugContext: GenerationDebugContext = {

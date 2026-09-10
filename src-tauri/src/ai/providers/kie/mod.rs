@@ -22,6 +22,8 @@ const RECORD_INFO_PATH: &str = "/api/v1/jobs/recordInfo";
 const FILE_UPLOAD_PATH: &str = "/api/file-stream-upload";
 const UPLOAD_PATH: &str = "images/storyboard-copilot";
 const POLL_INTERVAL_MS: u64 = 2500;
+/// 单任务轮询总上限：超过即按 TaskFailed 终止，杜绝无上限死循环。
+const POLL_TOTAL_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Deserialize)]
 struct KieCreateTaskResponse {
@@ -67,7 +69,7 @@ pub struct KieProvider {
 impl KieProvider {
     pub fn new() -> Self {
         Self {
-            client: Client::new(),
+            client: crate::ai::http::http_client().clone(),
             api_key: Arc::new(RwLock::new(None)),
         }
     }
@@ -416,7 +418,15 @@ impl KieProvider {
     }
 
     async fn poll_task_until_complete(&self, api_key: &str, task_id: &str) -> Result<String, AIError> {
+        let started_at = std::time::Instant::now();
         loop {
+            if started_at.elapsed() >= POLL_TOTAL_TIMEOUT {
+                return Err(AIError::TaskFailed(format!(
+                    "渠道响应超时（已等待 {} 分钟，任务 {} 仍未完成）",
+                    POLL_TOTAL_TIMEOUT.as_secs() / 60,
+                    task_id
+                )));
+            }
             match self.poll_task_once(api_key, task_id).await? {
                 ProviderTaskPollResult::Running => sleep(Duration::from_millis(POLL_INTERVAL_MS)).await,
                 ProviderTaskPollResult::Succeeded(url) => return Ok(url),

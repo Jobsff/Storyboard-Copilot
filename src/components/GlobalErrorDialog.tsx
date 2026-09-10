@@ -1,6 +1,7 @@
 import { UiButton, UiModal } from '@/components/ui';
 import { useTranslation } from 'react-i18next';
 import { useCallback, useState } from 'react';
+import type { GlobalErrorDialogAction } from '@/features/app/errorDialogEvents';
 
 interface GlobalErrorDialogProps {
   isOpen: boolean;
@@ -8,6 +9,7 @@ interface GlobalErrorDialogProps {
   message: string;
   details?: string;
   copyText?: string;
+  actions?: GlobalErrorDialogAction[];
   onClose: () => void;
 }
 
@@ -17,6 +19,7 @@ export function GlobalErrorDialog({
   message,
   details,
   copyText,
+  actions,
   onClose,
 }: GlobalErrorDialogProps) {
   const { t } = useTranslation();
@@ -35,6 +38,20 @@ export function GlobalErrorDialog({
     }
   }, [copyText, details, message]);
 
+  const handleAction = useCallback((action: GlobalErrorDialogAction) => {
+    if (action.onClick) {
+      action.onClick();
+    }
+    if (action.href) {
+      try {
+        window.open(action.href, '_blank', 'noopener,noreferrer');
+      } catch (error) {
+        console.warn('Failed to open error dialog action url', error);
+      }
+    }
+    onClose();
+  }, [onClose]);
+
   return (
     <UiModal
       isOpen={isOpen}
@@ -52,6 +69,16 @@ export function GlobalErrorDialog({
           >
             {copied ? t('nodeToolbar.copied') : t('errorDialog.copyReport')}
           </UiButton>
+          {(actions ?? []).map((action, index) => (
+            <UiButton
+              key={`${action.label}-${index}`}
+              variant={action.variant ?? 'primary'}
+              size="sm"
+              onClick={() => handleAction(action)}
+            >
+              {action.label}
+            </UiButton>
+          ))}
           <UiButton variant="primary" size="sm" onClick={onClose}>
             {t('common.close')}
           </UiButton>

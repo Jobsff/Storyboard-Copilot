@@ -28,7 +28,7 @@ struct ImageResponse {
 impl PPIOProvider {
     pub fn new() -> Self {
         Self {
-            client: Client::new(),
+            client: crate::ai::http::http_client().clone(),
             api_key: Arc::new(RwLock::new(None)),
             base_url: "https://api.ppio.com".to_string(),
             model_registry: PPIOModelRegistry::new(),

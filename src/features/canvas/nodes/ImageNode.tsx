@@ -16,8 +16,10 @@ import {
   EXPORT_RESULT_NODE_MIN_HEIGHT,
   type CanvasNodeType,
   type ExportImageNodeData,
+  type GenerationMeta,
   type ImageEditNodeData,
 } from '@/features/canvas/domain/canvasNodes';
+import { getModelProvider } from '@/features/canvas/models';
 import {
   resolveMinEdgeFittedSize,
   resolveResizeMinConstraintsByAspect,
@@ -64,6 +66,15 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
     typeof data.generationStartedAt === 'number' ? data.generationStartedAt : null;
   const generationDurationMs =
     typeof data.generationDurationMs === 'number' ? data.generationDurationMs : 60000;
+  const runningWarning =
+    typeof (data as { generationRunningError?: unknown }).generationRunningError === 'string'
+      ? ((data as { generationRunningError?: string }).generationRunningError ?? '').trim()
+      : '';
+  const generationMetaRaw = (data as { generationMeta?: unknown }).generationMeta;
+  const generationMeta =
+    isExportResultNode && generationMetaRaw && typeof generationMetaRaw === 'object'
+      ? (generationMetaRaw as GenerationMeta)
+      : null;
   const resolvedAspectRatio = data.aspectRatio || DEFAULT_ASPECT_RATIO;
   const compactSize = resolveMinEdgeFittedSize(resolvedAspectRatio, {
     minWidth: EXPORT_RESULT_NODE_MIN_WIDTH,
@@ -132,6 +143,51 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
 
     return t('node.imageNode.waitingResultDelayed', { minutes: waitedMinutes });
   }, [isExportResultNode, isGenerating, t, waitedMinutes]);
+
+  // running 态中间异常（链切换/渠道连续无响应）：生成中状态条下方的黄色小字，不打断。
+  const runningWarningElapsedLabel = useMemo(() => {
+    if (!isGenerating || generationStartedAt === null) {
+      return '';
+    }
+    const totalSeconds = Math.max(0, Math.floor((now - generationStartedAt) / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }, [generationStartedAt, isGenerating, now]);
+
+  // 成功角标（模块 D）：实际命中渠道 · 模型 · 耗时 · 智能链。
+  const generationMetaBadge = useMemo(() => {
+    if (!isExportResultNode || isGenerating || !generationMeta) {
+      return null;
+    }
+    const providerId = typeof generationMeta.providerId === 'string' ? generationMeta.providerId : '';
+    const model = typeof generationMeta.model === 'string' ? generationMeta.model : '';
+    if (!providerId && !model) {
+      return null;
+    }
+    const providerLabel = providerId
+      ? (getModelProvider(providerId).label || providerId)
+      : '';
+    const shortModel = model.includes('/') ? (model.split('/').pop() ?? model) : model;
+    const durationSeconds = typeof generationMeta.durationMs === 'number'
+      ? Math.max(1, Math.round(generationMeta.durationMs / 1000))
+      : null;
+    const parts = [providerLabel, shortModel].filter(Boolean);
+    if (durationSeconds !== null) {
+      parts.push(t('node.imageNode.metaDuration', { seconds: durationSeconds }));
+    }
+    if (generationMeta.mode === 'auto') {
+      parts.push(t('node.imageNode.metaChainMode'));
+    }
+    return {
+      label: parts.join(' · '),
+      title: Array.isArray(generationMeta.attempts) && generationMeta.attempts.length > 0
+        ? generationMeta.attempts
+          .map((attempt) => `${attempt.providerId}·${attempt.model}（${attempt.errorClass ?? ''}）`)
+          .join('\n')
+        : undefined,
+    };
+  }, [generationMeta, isExportResultNode, isGenerating, t]);
 
   const imageSource = useMemo(() => {
     const preferOriginal = shouldUseOriginalImageByZoom(zoom);
@@ -213,6 +269,28 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
               className="absolute left-0 top-0 h-full bg-gradient-to-r from-[rgba(255,255,255,0.4)] to-[rgba(255,255,255,0.06)] transition-[width] duration-100 ease-linear"
               style={{ width: `${simulatedProgress * 100}%` }}
             />
+          </div>
+        )}
+
+        {isGenerating && runningWarning && (
+          <div className="pointer-events-none absolute bottom-0 left-0 right-0 flex items-center gap-1 border-t border-amber-400/30 bg-amber-500/15 px-2 py-1">
+            <span className="min-w-0 flex-1 truncate text-[10px] leading-4 text-amber-300">
+              {runningWarning}
+            </span>
+            {runningWarningElapsedLabel && (
+              <span className="shrink-0 text-[10px] leading-4 text-amber-300/80">
+                {runningWarningElapsedLabel}
+              </span>
+            )}
+          </div>
+        )}
+
+        {generationMetaBadge && (
+          <div
+            className="absolute bottom-1 right-1 max-w-[calc(100%-8px)] truncate rounded-md border border-[rgba(255,255,255,0.14)] bg-black/55 px-1.5 py-0.5 text-[10px] leading-4 text-text-muted"
+            title={generationMetaBadge.title}
+          >
+            {generationMetaBadge.label}
           </div>
         )}
 

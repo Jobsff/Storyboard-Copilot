@@ -29,6 +29,10 @@ import {
 } from '@/features/canvas/application/canvasServices';
 import { resolveErrorContent, showErrorDialog } from '@/features/canvas/application/errorDialog';
 import {
+  resolveErrorAdvice,
+  showActionableErrorDialog,
+} from '@/features/canvas/application/errorAdvice';
+import {
   detectAspectRatio,
   parseAspectRatio,
   resolveImageDisplayUrl,
@@ -40,6 +44,7 @@ import {
   getRuntimeDiagnostics,
   type GenerationDebugContext,
 } from '@/features/canvas/application/generationErrorReport';
+import { buildAutoImageFallback, injectChainApiKeys } from '@/features/canvas/application/imageFallback';
 import {
   findReferenceTokens,
   insertReferenceToken,
@@ -58,6 +63,7 @@ import { FAL_NANO_BANANA_2_MODEL_ID } from '@/features/canvas/models/image/fal/n
 import { KIE_NANO_BANANA_2_MODEL_ID } from '@/features/canvas/models/image/kie/nanoBanana2';
 import { API666_GPT_IMAGE_2_MODEL_ID } from '@/features/canvas/models/image/api666/gptImage2';
 import { JUYOUAPI_GPT_IMAGE_2_MODEL_ID } from '@/features/canvas/models/image/juyouapi/gptImage2';
+import { AUTO_PROVIDER_ID } from '@/features/canvas/models/image/auto/autoCapabilities';
 import { resolve666ApiKey, resolve666ReversePromptKeyId } from '@/features/canvas/models/providers/api666';
 import { resolveModelPriceDisplay } from '@/features/canvas/pricing';
 import {
@@ -591,7 +597,20 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
       return;
     }
 
-    if (!providerApiKey) {
+    // 智能出图（auto/*）不绑定单一渠道 key：改查降级链可用渠道，空链直接拦截，
+    // 绝不把 auto/* 占位模型 id 发给 Rust。
+    const isAutoModel = selectedModel.providerId === AUTO_PROVIDER_ID;
+    const autoFallback = isAutoModel
+      ? buildAutoImageFallback(selectedModel.id, apiKeys, useSettingsStore.getState())
+      : null;
+    if (isAutoModel && !autoFallback) {
+      const errorMessage = t('ai.chainKeyRequired');
+      setError(errorMessage);
+      void showErrorDialog(errorMessage, t('common.error'));
+      return;
+    }
+
+    if (!isAutoModel && !providerApiKey) {
       const errorMessage = t('node.imageEdit.apiKeyRequired');
       setError(errorMessage);
       void showErrorDialog(errorMessage, t('common.error'));
@@ -623,7 +642,12 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
     addEdge(id, newNodeId);
 
     try {
-      await canvasAiGateway.setApiKey(selectedModel.providerId, providerApiKey);
+      if (!isAutoModel) {
+        await canvasAiGateway.setApiKey(selectedModel.providerId, providerApiKey);
+      } else if (autoFallback) {
+        // 链任务 hop 会换渠道：提交前把链内所有渠道 key 预注入 Rust
+        await injectChainApiKeys(apiKeys, autoFallback.availableProviders);
+      }
 
       const finalPrompt =
         (selectedModel.id === API666_GPT_IMAGE_2_MODEL_ID ||
@@ -657,6 +681,12 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         aspectRatio: resolvedRequestAspectRatio,
         referenceImages: incomingImages,
         extraParams: effectiveExtraParams,
+        fallback: autoFallback
+          ? {
+            quality: autoFallback.quality,
+            availableProviders: autoFallback.availableProviders,
+          }
+          : undefined,
       });
       const generationDebugContext: GenerationDebugContext = {
         sourceType: 'imageEdit',
@@ -705,12 +735,21 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
         context: generationDebugContext,
       });
       setError(resolvedError.message);
-      void showErrorDialog(
-        resolvedError.message,
-        t('common.error'),
-        resolvedError.details,
-        reportText
-      );
+      // 提交期错误无 Rust error_class：走关键词兜底分类（模块 F）。
+      showActionableErrorDialog({
+        advice: resolveErrorAdvice({
+          message: resolvedError.message,
+          providerId: generationDebugContext.providerId,
+          isChain: isAutoModel,
+          canRetry: true,
+        }),
+        translate: t,
+        originalMessage: resolvedError.message,
+        reportText,
+        onRetry: () => {
+          void handleGenerate();
+        },
+      });
       updateNodeData(newNodeId, {
         isGenerating: false,
         generationStartedAt: null,
@@ -725,6 +764,7 @@ export const ImageEditNode = memo(({ id, data, selected, width, height }: ImageE
   }, [
     addNode,
     addEdge,
+    apiKeys,
     providerApiKey,
     findNodePosition,
     promptDraft,

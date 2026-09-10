@@ -2,30 +2,50 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
   DEFAULT_GRSAI_CREDIT_TIER_ID,
-  PRICE_DISPLAY_CURRENCY_MODES,
   type GrsaiCreditTierId,
   type PriceDisplayCurrencyMode,
 } from '@/features/canvas/pricing/types';
 
-export type UiRadiusPreset = 'compact' | 'default' | 'large';
-export type ThemeTonePreset = 'neutral' | 'warm' | 'cool';
-export type CanvasEdgeRoutingMode = 'spline' | 'orthogonal' | 'smartOrthogonal';
-export type ProviderApiKeys = Record<string, string>;
-export const DEFAULT_GRSAI_NANO_BANANA_PRO_MODEL = 'nano-banana-pro';
+import {
+  DEFAULT_GRSAI_NANO_BANANA_PRO_MODEL,
+  migratePersistedSettings,
+  normalizeApiKey,
+  normalizeCanvasEdgeRoutingMode,
+  normalizeCustomEndpoint,
+  normalizeGrsaiCreditTierId,
+  normalizeGrsaiNanoBananaProModel,
+  normalizeHexColor,
+  normalizeImageGenMode,
+  normalizeImageQuality,
+  normalizePriceDisplayCurrencyMode,
+  normalizeUsdToCnyRate,
+  type CanvasEdgeRoutingMode,
+  type CustomEndpoint,
+  type ImageGenMode,
+  type ImageQualityMode,
+  type ProviderApiKeys,
+  type ThemeTonePreset,
+  type UiRadiusPreset,
+} from './settingsMigration';
 
-/** A user-defined NEWAPI-compatible (OpenAI-compatible) endpoint. */
-export interface CustomEndpoint {
-  /** Internal routing id, e.g. `newapi_<hash>`. Must start with `newapi_`. */
-  id: string;
-  /** User-facing display name, e.g. "小胡API". */
-  name: string;
-  /** Base URL, e.g. https://picture.aifast.site */
-  baseUrl: string;
-  /** Raw model names selected by the user (without the `${id}/` prefix). */
-  selectedModels: string[];
-}
+// Re-export public types/utilities so existing `@/stores/settingsStore` imports keep working.
+export {
+  AIFAST_BASE_URL,
+  AIFAST_PROVIDER_ID,
+  DEFAULT_GRSAI_NANO_BANANA_PRO_MODEL,
+  generateCustomEndpointId,
+} from './settingsMigration';
+export type {
+  CanvasEdgeRoutingMode,
+  CustomEndpoint,
+  ImageGenMode,
+  ImageQualityMode,
+  ProviderApiKeys,
+  ThemeTonePreset,
+  UiRadiusPreset,
+} from './settingsMigration';
 
-interface SettingsState {
+export interface SettingsState {
   isHydrated: boolean;
   apiKeys: ProviderApiKeys;
   juyouapiBaseUrl: string;
@@ -56,6 +76,16 @@ interface SettingsState {
   autoCheckAppUpdateOnLaunch: boolean;
   enableUpdateDialog: boolean;
   customEndpoints: CustomEndpoint[];
+  /** aifast 是否加入智能出图降级链（v20 引入；v21 起模型改静态清单，仅留此开关）。 */
+  aifastJoinChain: boolean;
+  /** 智能出图模式：auto=默认智能出图；expert=专家模式（批次5 设置页接 UI）。 */
+  imageGenMode: ImageGenMode;
+  /** 智能出图默认质量档（批次5 设置页接 UI）。 */
+  imageQuality: ImageQualityMode;
+  /** 启动时渠道探活开关（批次6 使用）。 */
+  autoProbeOnLaunch: boolean;
+  /** 后端同步失败项（批次5：juyouapi/ollama/customEndpoint 推送失败收集，仅设置页可见）。 */
+  backendSyncErrors: string[];
   setHydrated: (hydrated: boolean) => void;
   setProviderApiKey: (providerId: string, key: string) => void;
   setJuyouapiBaseUrl: (url: string) => void;
@@ -89,128 +119,67 @@ interface SettingsState {
   updateCustomEndpoint: (id: string, patch: Partial<Omit<CustomEndpoint, 'id'>>) => void;
   removeCustomEndpoint: (id: string) => void;
   setCustomEndpointModels: (id: string, models: string[]) => void;
+  setAifastJoinChain: (enabled: boolean) => void;
+  setImageGenMode: (mode: ImageGenMode) => void;
+  setImageQuality: (quality: ImageQualityMode) => void;
+  setAutoProbeOnLaunch: (enabled: boolean) => void;
+  setBackendSyncErrors: (errors: string[]) => void;
 }
 
-const HEX_COLOR_PATTERN = /^#?[0-9a-fA-F]{6}$/;
-
-function normalizeHexColor(input: string): string {
-  const trimmed = input.trim();
-  if (!HEX_COLOR_PATTERN.test(trimmed)) {
-    return '#3B82F6';
-  }
-  return trimmed.startsWith('#') ? trimmed.toUpperCase() : `#${trimmed.toUpperCase()}`;
-}
-
-function normalizeApiKey(input: string): string {
-  return input.trim();
-}
-
-function normalizePriceDisplayCurrencyMode(
-  input: PriceDisplayCurrencyMode | string | null | undefined
-): PriceDisplayCurrencyMode {
-  return PRICE_DISPLAY_CURRENCY_MODES.includes(input as PriceDisplayCurrencyMode)
-    ? (input as PriceDisplayCurrencyMode)
-    : 'auto';
-}
-
-function normalizeUsdToCnyRate(input: number | string | null | undefined): number {
-  const numeric = typeof input === 'number' ? input : Number(input);
-  if (!Number.isFinite(numeric) || numeric <= 0) {
-    return 7.2;
+/**
+ * 把设置同步到 Rust 后端（juyouapi/ollama baseUrl、自定义 NEWAPI 接口注册）。
+ * 返回失败项描述列表（空数组 = 全部成功）；静默失败可见化（批次5）的数据源。
+ * API key 不在此批量同步——沿用"提交前按需注入"的既有语义。
+ */
+export async function syncBackendSettings(state: {
+  juyouapiBaseUrl?: string;
+  ollamaBaseUrl?: string;
+  ollamaModel?: string;
+  customEndpoints?: CustomEndpoint[];
+  apiKeys?: ProviderApiKeys;
+}): Promise<string[]> {
+  const failures: string[] = [];
+  let commands: typeof import('@/commands/ai');
+  try {
+    commands = await import('@/commands/ai');
+  } catch {
+    return ['ai'];
   }
 
-  return Math.min(100, Math.max(0.01, Math.round(numeric * 100) / 100));
-}
-
-function normalizeGrsaiCreditTierId(
-  input: GrsaiCreditTierId | string | null | undefined
-): GrsaiCreditTierId {
-  switch (input) {
-    case 'tier-10':
-    case 'tier-20':
-    case 'tier-49':
-    case 'tier-99':
-    case 'tier-499':
-    case 'tier-999':
-      return input;
-    default:
-      return DEFAULT_GRSAI_CREDIT_TIER_ID;
-  }
-}
-
-function normalizeGrsaiNanoBananaProModel(input: string | null | undefined): string {
-  const trimmed = (input ?? '').trim().toLowerCase();
-  if (trimmed === DEFAULT_GRSAI_NANO_BANANA_PRO_MODEL || trimmed.startsWith('nano-banana-pro-')) {
-    return trimmed;
-  }
-  return DEFAULT_GRSAI_NANO_BANANA_PRO_MODEL;
-}
-
-function normalizeCanvasEdgeRoutingMode(
-  input: CanvasEdgeRoutingMode | string | null | undefined
-): CanvasEdgeRoutingMode {
-  if (input === 'orthogonal' || input === 'smartOrthogonal' || input === 'spline') {
-    return input;
-  }
-  return 'spline';
-}
-
-function normalizeApiKeys(input: ProviderApiKeys | null | undefined): ProviderApiKeys {
-  if (!input) {
-    return {};
+  const baseUrl = state.juyouapiBaseUrl?.trim();
+  if (baseUrl) {
+    await commands.setJuyouapiBaseUrl(baseUrl).catch(() => {
+      failures.push('juyouapi');
+    });
   }
 
-  return Object.entries(input).reduce<ProviderApiKeys>((acc, [providerId, key]) => {
-    const normalizedProviderId = providerId.trim();
-    if (!normalizedProviderId) {
-      return acc;
+  const ollamaBaseUrl = state.ollamaBaseUrl?.trim();
+  const ollamaModel = state.ollamaModel?.trim();
+  if (ollamaBaseUrl || ollamaModel) {
+    if (ollamaBaseUrl) {
+      await commands.setOllamaBaseUrl(ollamaBaseUrl).catch(() => {
+        failures.push('ollama');
+      });
     }
-
-    acc[normalizedProviderId] = normalizeApiKey(key);
-    return acc;
-  }, {});
-}
-
-/** Generate a unique routing id for a custom endpoint. */
-export function generateCustomEndpointId(): string {
-  // 8 hex chars from a random source; prefixed with `newapi_` for routing.
-  const random = Math.random().toString(16).slice(2, 10).padEnd(8, '0');
-  const stamp = Date.now().toString(16).slice(-4);
-  return `newapi_${stamp}${random}`.slice(0, 20);
-}
-
-function normalizeCustomEndpoint(input: unknown): CustomEndpoint | null {
-  if (!input || typeof input !== 'object') return null;
-  const raw = input as Record<string, unknown>;
-  const id = typeof raw.id === 'string' ? raw.id.trim() : '';
-  if (!id.startsWith('newapi_')) return null;
-  const baseUrl = typeof raw.baseUrl === 'string' ? raw.baseUrl.trim() : '';
-  // Allow an empty name while the user is editing (clearing the input box);
-  // a display fallback to the id is applied in the UI, not stored here.
-  const name = typeof raw.name === 'string' ? raw.name : '';
-  const models = Array.isArray(raw.selectedModels)
-    ? raw.selectedModels.filter((m): m is string => typeof m === 'string' && m.trim().length > 0)
-    : [];
-  return {
-    id,
-    name,
-    baseUrl,
-    selectedModels: Array.from(new Set(models)),
-  };
-}
-
-function normalizeCustomEndpoints(input: unknown): CustomEndpoint[] {
-  if (!Array.isArray(input)) return [];
-  const seen = new Set<string>();
-  const result: CustomEndpoint[] = [];
-  for (const item of input) {
-    const normalized = normalizeCustomEndpoint(item);
-    if (normalized && seen.add(normalized.id)) {
-      result.push(normalized);
+    if (ollamaModel) {
+      await commands.setOllamaModel(ollamaModel).catch(() => {
+        failures.push('ollama');
+      });
     }
   }
-  return result;
+
+  const endpoints = state.customEndpoints ?? [];
+  const apiKeys = state.apiKeys ?? {};
+  for (const endpoint of endpoints) {
+    const key = apiKeys[endpoint.id] ?? '';
+    await commands.registerCustomEndpoint(endpoint.id, endpoint.baseUrl, key).catch(() => {
+      failures.push(endpoint.name || endpoint.id);
+    });
+  }
+  return failures;
 }
+
+// Persist middleware types these as strings in state literals; pricing value imports are above.
 
 export function hasConfiguredApiKey(apiKeys: ProviderApiKeys): boolean {
   return getConfiguredApiKeyCount(apiKeys) > 0;
@@ -262,6 +231,11 @@ export const useSettingsStore = create<SettingsState>()(
       autoCheckAppUpdateOnLaunch: true,
       enableUpdateDialog: true,
       customEndpoints: [],
+      aifastJoinChain: false,
+      imageGenMode: 'auto',
+      imageQuality: 'standard',
+      autoProbeOnLaunch: true,
+      backendSyncErrors: [],
       setHydrated: (hydrated) => set({ isHydrated: hydrated }),
       setProviderApiKey: (providerId, key) =>
         set((state) => ({
@@ -347,162 +321,36 @@ export const useSettingsStore = create<SettingsState>()(
               : item
           ),
         })),
+      setAifastJoinChain: (enabled) => set({ aifastJoinChain: enabled }),
+      setImageGenMode: (imageGenMode) => set({ imageGenMode: normalizeImageGenMode(imageGenMode) }),
+      setImageQuality: (imageQuality) =>
+        set({ imageQuality: normalizeImageQuality(imageQuality) }),
+      setAutoProbeOnLaunch: (enabled) => set({ autoProbeOnLaunch: enabled }),
+      setBackendSyncErrors: (backendSyncErrors) => set({ backendSyncErrors }),
     }),
     {
       name: 'settings-storage',
-      version: 17,
+      version: 21,
       onRehydrateStorage: () => {
         return (state, error) => {
           if (error) {
             console.error('failed to hydrate settings storage', error);
           }
           state?.setHydrated(true);
-          // Sync juyouapi base URL to Rust backend on hydration
-          const baseUrl = state?.juyouapiBaseUrl?.trim();
-          if (baseUrl) {
-            import('@/commands/ai').then(({ setJuyouapiBaseUrl }) => {
-              setJuyouapiBaseUrl(baseUrl).catch(() => {});
-            });
-          }
-          // Sync Ollama config to Rust backend on hydration
-          const ollamaBaseUrl = state?.ollamaBaseUrl?.trim();
-          const ollamaModel = state?.ollamaModel?.trim();
-          if (ollamaBaseUrl || ollamaModel) {
-            import('@/commands/ai').then(({ setOllamaBaseUrl, setOllamaModel }) => {
-              if (ollamaBaseUrl) {
-                setOllamaBaseUrl(ollamaBaseUrl).catch(() => {});
-              }
-              if (ollamaModel) {
-                setOllamaModel(ollamaModel).catch(() => {});
-              }
-            });
-          }
-          // Sync custom NEWAPI endpoints to Rust backend on hydration
-          const endpoints = state?.customEndpoints ?? [];
-          if (endpoints.length > 0) {
-            import('@/commands/ai').then(({ registerCustomEndpoint }) => {
-              const apiKeys = state?.apiKeys ?? {};
-              endpoints.forEach((endpoint) => {
-                const key = apiKeys[endpoint.id] ?? '';
-                registerCustomEndpoint(endpoint.id, endpoint.baseUrl, key).catch(() => {});
-              });
-            });
-          }
+          // 设置 → Rust 后端同步（baseUrl/自定义接口）。失败不再静默吞掉：
+          // 收集进 backendSyncErrors，设置页黄条可见 + 可重试（批次5）。
+          void syncBackendSettings({
+            juyouapiBaseUrl: state?.juyouapiBaseUrl,
+            ollamaBaseUrl: state?.ollamaBaseUrl,
+            ollamaModel: state?.ollamaModel,
+            customEndpoints: state?.customEndpoints,
+            apiKeys: state?.apiKeys,
+          }).then((failures) => {
+            useSettingsStore.getState().setBackendSyncErrors(failures);
+          });
         };
       },
-      migrate: (persistedState: unknown) => {
-        const state = (persistedState ?? {}) as {
-          apiKey?: string;
-          apiKeys?: ProviderApiKeys;
-          ignoreAtTagWhenCopyingAndGenerating?: boolean;
-          grsaiNanoBananaProModel?: string;
-          hideProviderGuidePopover?: boolean;
-          canvasEdgeRoutingMode?: CanvasEdgeRoutingMode | string;
-          autoCheckAppUpdateOnLaunch?: boolean;
-          enableUpdateDialog?: boolean;
-          enableStoryboardGenGridPreviewShortcut?: boolean;
-          showStoryboardGenAdvancedRatioControls?: boolean;
-          storyboardGenAutoInferEmptyFrame?: boolean;
-          showNodePrice?: boolean;
-          priceDisplayCurrencyMode?: PriceDisplayCurrencyMode | string;
-          usdToCnyRate?: number | string;
-          preferDiscountedPrice?: boolean;
-          grsaiCreditTierId?: GrsaiCreditTierId | string;
-          customEndpoints?: unknown;
-        };
-
-        const migratedApiKeys = normalizeApiKeys(state.apiKeys);
-        if (migratedApiKeys['666api']) {
-          const existingKey = migratedApiKeys['666api'];
-          migratedApiKeys['666api_claude'] = existingKey;
-          migratedApiKeys['666api_gpt'] = existingKey;
-          migratedApiKeys['666api_gemini'] = existingKey;
-          migratedApiKeys['666api_default'] = existingKey;
-          delete migratedApiKeys['666api'];
-        }
-        // Migrate juyouapi group keys to single key
-        if (!migratedApiKeys['juyouapi']) {
-          const singleKey =
-            migratedApiKeys['juyouapi_default'] ||
-            migratedApiKeys['juyouapi_gemini'] ||
-            migratedApiKeys['juyouapi_gpt'] ||
-            migratedApiKeys['juyouapi_claude'];
-          if (singleKey) {
-            migratedApiKeys['juyouapi'] = singleKey;
-          }
-        }
-        delete migratedApiKeys['juyouapi_default'];
-        delete migratedApiKeys['juyouapi_gemini'];
-        delete migratedApiKeys['juyouapi_gpt'];
-        delete migratedApiKeys['juyouapi_claude'];
-        const ignoreAtTagWhenCopyingAndGenerating =
-          state.ignoreAtTagWhenCopyingAndGenerating ?? true;
-        if (Object.keys(migratedApiKeys).length > 0) {
-          return {
-            ...(persistedState as object),
-            isHydrated: true,
-            apiKeys: migratedApiKeys,
-            ignoreAtTagWhenCopyingAndGenerating,
-            grsaiNanoBananaProModel: normalizeGrsaiNanoBananaProModel(
-              state.grsaiNanoBananaProModel
-            ),
-            hideProviderGuidePopover: state.hideProviderGuidePopover ?? false,
-            canvasEdgeRoutingMode: normalizeCanvasEdgeRoutingMode(state.canvasEdgeRoutingMode),
-            autoCheckAppUpdateOnLaunch: state.autoCheckAppUpdateOnLaunch ?? true,
-            enableUpdateDialog: state.enableUpdateDialog ?? true,
-            enableStoryboardGenGridPreviewShortcut:
-              state.enableStoryboardGenGridPreviewShortcut ?? false,
-            showStoryboardGenAdvancedRatioControls:
-              state.showStoryboardGenAdvancedRatioControls ?? false,
-            storyboardGenAutoInferEmptyFrame: state.storyboardGenAutoInferEmptyFrame ?? true,
-            showNodePrice: state.showNodePrice ?? true,
-            priceDisplayCurrencyMode: normalizePriceDisplayCurrencyMode(
-              state.priceDisplayCurrencyMode
-            ),
-            usdToCnyRate: normalizeUsdToCnyRate(state.usdToCnyRate),
-            preferDiscountedPrice: state.preferDiscountedPrice ?? false,
-            grsaiCreditTierId: normalizeGrsaiCreditTierId(state.grsaiCreditTierId),
-            juyouapiBaseUrl: (state as { juyouapiBaseUrl?: string }).juyouapiBaseUrl ?? '',
-            ollamaBaseUrl: (state as { ollamaBaseUrl?: string }).ollamaBaseUrl ?? 'http://localhost:11434',
-            ollamaModel: (state as { ollamaModel?: string }).ollamaModel ?? '',
-            aiAssistantProvider: (state as { aiAssistantProvider?: string }).aiAssistantProvider ?? '666api',
-            aiAssistantModel: (state as { aiAssistantModel?: string }).aiAssistantModel ?? '',
-            lastUsedImageModel: (state as { lastUsedImageModel?: string }).lastUsedImageModel ?? '',
-            customEndpoints: normalizeCustomEndpoints(state.customEndpoints),
-          };
-        }
-
-        return {
-          ...(persistedState as object),
-          isHydrated: true,
-          apiKeys: state.apiKey ? { ppio: normalizeApiKey(state.apiKey) } : {},
-          ignoreAtTagWhenCopyingAndGenerating,
-          grsaiNanoBananaProModel: normalizeGrsaiNanoBananaProModel(
-            state.grsaiNanoBananaProModel
-          ),
-          hideProviderGuidePopover: state.hideProviderGuidePopover ?? false,
-          canvasEdgeRoutingMode: normalizeCanvasEdgeRoutingMode(state.canvasEdgeRoutingMode),
-          autoCheckAppUpdateOnLaunch: state.autoCheckAppUpdateOnLaunch ?? true,
-          enableUpdateDialog: state.enableUpdateDialog ?? true,
-          enableStoryboardGenGridPreviewShortcut:
-            state.enableStoryboardGenGridPreviewShortcut ?? false,
-          showStoryboardGenAdvancedRatioControls:
-            state.showStoryboardGenAdvancedRatioControls ?? false,
-          storyboardGenAutoInferEmptyFrame: state.storyboardGenAutoInferEmptyFrame ?? true,
-          showNodePrice: state.showNodePrice ?? true,
-          priceDisplayCurrencyMode: normalizePriceDisplayCurrencyMode(
-            state.priceDisplayCurrencyMode
-          ),
-          usdToCnyRate: normalizeUsdToCnyRate(state.usdToCnyRate),
-          preferDiscountedPrice: state.preferDiscountedPrice ?? false,
-          grsaiCreditTierId: normalizeGrsaiCreditTierId(state.grsaiCreditTierId),
-          ollamaBaseUrl: (state as { ollamaBaseUrl?: string }).ollamaBaseUrl ?? 'http://localhost:11434',
-          ollamaModel: (state as { ollamaModel?: string }).ollamaModel ?? '',
-          aiAssistantProvider: (state as { aiAssistantProvider?: string }).aiAssistantProvider ?? '666api',
-          lastUsedImageModel: (state as { lastUsedImageModel?: string }).lastUsedImageModel ?? '',
-          customEndpoints: normalizeCustomEndpoints(state.customEndpoints),
-        };
-      },
+      migrate: migratePersistedSettings,
     }
   )
 );

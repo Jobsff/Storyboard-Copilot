@@ -4,6 +4,8 @@ export type SettingsCategory =
   | 'pricing'
   | 'appearance'
   | 'general'
+  | 'history'
+  | 'health'
   | 'experimental'
   | 'about';
 

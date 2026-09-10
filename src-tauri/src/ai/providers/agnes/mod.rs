@@ -55,7 +55,7 @@ struct ChatCompletionMessage {
 impl AgnesProvider {
     pub fn new() -> Self {
         Self {
-            client: Client::new(),
+            client: crate::ai::http::http_client().clone(),
             api_key: Arc::new(RwLock::new(None)),
             base_url: Arc::new(RwLock::new(DEFAULT_BASE_URL.to_string())),
         }

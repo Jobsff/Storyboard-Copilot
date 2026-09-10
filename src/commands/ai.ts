@@ -1,5 +1,26 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 
+/**
+ * 追加 hop 规格（批次8：NEWAPI 接口 / aifast 入链；Rust ExtraHopSpec 对齐）。
+ * model 为完整 id（`{provider}/{model}`），display_name 为端点显示名（链轨迹用）。
+ */
+export interface ExtraHopSpec {
+  provider_id: string;
+  model: string;
+  display_name: string;
+}
+
+/**
+ * 自动降级链选项（仅智能出图虚拟模型注入；不带 = 单点直连，行为与历史版本一致）。
+ * Rust 侧按 available_providers（有 key 的渠道 id 列表）过滤 build_chain；
+ * extra_hops（批次8，可选）：NEWAPI 接口 / aifast 追加档，缺省空 = 行为与 v0.3.0 一致。
+ */
+export interface GenerateFallbackOptions {
+  quality: 'standard' | 'pro';
+  available_providers: string[];
+  extra_hops?: ExtraHopSpec[];
+}
+
 export interface GenerateRequest {
   prompt: string;
   model: string;
@@ -7,6 +28,7 @@ export interface GenerateRequest {
   aspect_ratio: string;
   reference_images?: string[];
   extra_params?: Record<string, unknown>;
+  fallback?: GenerateFallbackOptions;
 }
 
 export interface ReversePromptRequest {
@@ -19,11 +41,28 @@ export interface ReversePromptRequest {
 
 export type GenerationJobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'not_found';
 
+/** 链轨迹条目（Rust ChainAttempt；批次5 generationMeta 数据源）。 */
+export interface GenerationAttemptStatus {
+  provider_id: string;
+  model: string;
+  error_class?: string | null;
+  error?: string | null;
+  /** 端点显示名（批次8，NEWAPI 接口 extra hop 才有；展示优先于 provider_id）。 */
+  display_name?: string | null;
+}
+
 export interface GenerationJobStatus {
   job_id: string;
   status: GenerationJobState;
   result?: string | null;
   error?: string | null;
+  /** 错误分类（timeout/channel_down/auth/quota/content_filter/unknown），批次5 接 UI。 */
+  error_class?: string | null;
+  /** 实际执行渠道：running=当前 hop，succeeded=实际命中（Rust skip_serializing_if 可缺省）。 */
+  provider_id?: string | null;
+  model?: string | null;
+  /** 链轨迹；单点任务缺省。 */
+  attempts?: GenerationAttemptStatus[];
 }
 
 const BASE64_PREVIEW_HEAD = 96;
@@ -68,6 +107,13 @@ function sanitizeGenerateRequestForLog(request: GenerateRequest): Record<string,
       truncateBase64Like(item)
     ),
     extra_params: request.extra_params ?? {},
+    fallback: request.fallback
+      ? {
+        quality: request.fallback.quality,
+        available_providers: request.fallback.available_providers,
+        extra_hops_count: request.fallback.extra_hops?.length ?? 0,
+      }
+      : undefined,
   };
 }
 
@@ -251,6 +297,80 @@ export async function getGenerateVideoJob(jobId: string): Promise<GenerationJobS
 
 export async function listModels(): Promise<string[]> {
   return await invoke('list_models');
+}
+
+/** 生成历史台账条目（Rust GenerationHistoryDto 对齐；纯元数据，无图片）。 */
+export interface GenerationHistoryEntry {
+  job_id: string;
+  provider_id: string;
+  model: string;
+  /** auto=智能链（有 fallback），manual=单点直连。 */
+  mode: string;
+  quality?: string | null;
+  prompt?: string | null;
+  size?: string | null;
+  aspect_ratio?: string | null;
+  duration_ms?: number | null;
+  /** 链轨迹原文 JSON（GenerationAttemptStatus[]）；单点为 null。 */
+  attempts_json?: string | null;
+  status: string;
+  error_class?: string | null;
+  created_at: number;
+}
+
+/** 生成历史台账查询（批次5 设置页消费；按 created_at 倒序，默认 100 条）。 */
+export async function listGenerationHistory(limit = 100): Promise<GenerationHistoryEntry[]> {
+  if (!isTauri()) {
+    throw new Error('当前不是 Tauri 容器环境，请使用 `npm run tauri dev` 启动');
+  }
+
+  const rows = await invoke<GenerationHistoryEntry[]>('list_generation_history', { limit });
+  return Array.isArray(rows) ? rows : [];
+}
+
+/** 单渠道探活请求快照（localStorage 是 key 唯一真源，Rust 不持久化密钥）。 */
+export interface ChannelProbeRequest {
+  provider_id: string;
+  api_key: string;
+  base_url?: string | null;
+}
+
+export type ChannelProbeStatus = 'ok' | 'reachable' | 'down' | 'unconfigured';
+
+/** 渠道探活/健康结果（Rust ChannelProbeDto 对齐）。 */
+export interface ChannelProbeResult {
+  provider_id: string;
+  status: ChannelProbeStatus | string;
+  latency_ms?: number | null;
+  detail?: string | null;
+  /** 该渠道在三条静态链中的成员模型被探活列表命中的个数（ok 时才有意义）。 */
+  chain_models_ok?: number | null;
+  checked_at: number;
+}
+
+/**
+ * 渠道探活（模块 C doctor）：零生成成本，只拉模型列表，绝不发生成请求。
+ * 10s/渠道自身超时，总耗时 ≈ 最慢渠道封顶；结果落 ai_channel_health 台账。
+ */
+export async function probeChannels(
+  providers: ChannelProbeRequest[]
+): Promise<ChannelProbeResult[]> {
+  if (!isTauri()) {
+    throw new Error('当前不是 Tauri 容器环境，请使用 `npm run tauri dev` 启动');
+  }
+
+  const rows = await invoke<ChannelProbeResult[]>('probe_channels', { providers });
+  return Array.isArray(rows) ? rows : [];
+}
+
+/** 最近一次渠道健康结果（面板/选择器圆点数据源；不触发探测）。 */
+export async function listChannelHealth(): Promise<ChannelProbeResult[]> {
+  if (!isTauri()) {
+    throw new Error('当前不是 Tauri 容器环境，请使用 `npm run tauri dev` 启动');
+  }
+
+  const rows = await invoke<ChannelProbeResult[]>('list_channel_health');
+  return Array.isArray(rows) ? rows : [];
 }
 
 export async function listProviderModels(

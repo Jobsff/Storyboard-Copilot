@@ -31,6 +31,14 @@ export interface GraphImageResolver {
   collectInputImages: (nodeId: string, nodes: CanvasNode[], edges: CanvasEdge[]) => string[];
 }
 
+/** 自动降级链选项（仅智能出图虚拟模型注入；不带 = 单点直连）。 */
+export interface GenerateImageFallback {
+  quality: 'standard' | 'pro';
+  availableProviders: string[];
+  /** NEWAPI 接口 / aifast 追加档（批次8，可选；缺省空 = 行为与 v0.3.0 一致）。 */
+  extraHops?: Array<{ provider_id: string; model: string; display_name: string }>;
+}
+
 export interface GenerateImagePayload {
   prompt: string;
   model: string;
@@ -38,6 +46,7 @@ export interface GenerateImagePayload {
   aspectRatio: string;
   referenceImages?: string[];
   extraParams?: Record<string, unknown>;
+  fallback?: GenerateImageFallback;
 }
 
 export interface GenerateVideoPayload {
@@ -66,6 +75,15 @@ export interface AiGateway {
     status: 'queued' | 'running' | 'succeeded' | 'failed' | 'not_found';
     result?: string | null;
     error?: string | null;
+    error_class?: string | null;
+    provider_id?: string | null;
+    model?: string | null;
+    attempts?: Array<{
+      provider_id: string;
+      model: string;
+      error_class?: string | null;
+      error?: string | null;
+    }>;
   }>;
   submitGenerateVideoJob: (payload: GenerateVideoPayload) => Promise<string>;
   getGenerateVideoJob: (jobId: string) => Promise<{
@@ -73,6 +91,15 @@ export interface AiGateway {
     status: 'queued' | 'running' | 'succeeded' | 'failed' | 'not_found';
     result?: string | null;
     error?: string | null;
+    error_class?: string | null;
+    provider_id?: string | null;
+    model?: string | null;
+    attempts?: Array<{
+      provider_id: string;
+      model: string;
+      error_class?: string | null;
+      error?: string | null;
+    }>;
   }>;
   reversePrompt: (provider: string, payload: ReversePromptPayload) => Promise<string>;
 }

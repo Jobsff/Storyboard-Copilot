@@ -6,6 +6,8 @@ export interface ModelProviderDefinition {
   id: string;
   name: string;
   label: string;
+  /** 渠道情报一行定位结论（docs/settings/provider-guide.md 提炼；zh/en 直取跟随界面语言）。 */
+  advice?: { zh: string; en: string };
 }
 
 export interface AspectRatioOption {

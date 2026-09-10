@@ -10,13 +10,19 @@ export interface GrsaiCreditTierDefinition {
   credits: number;
 }
 
+/**
+ * GRSAI 充值档（批次9 定价口径修正）：对齐 image-studio 技能实测口径「积分÷20000=元」
+ * （1 点 = ¥0.00005，¥10 档 = 200000 点）。此前 credits 按 1 点=¥0.0001 标定，
+ * 导致 nano-banana-2 报 ¥0.13（实际 ¥0.06）、pro 报 ¥0.18（实际 ¥0.09）。
+ * 已选档位 id 语义不变（越贵的档每点越便宜），仅换算基准校正。
+ */
 export const GRSAI_CREDIT_TIERS = [
-  { id: 'tier-10', priceCny: 10, credits: 100000 },
-  { id: 'tier-20', priceCny: 20, credits: 250000 },
-  { id: 'tier-49', priceCny: 49, credits: 750000 },
-  { id: 'tier-99', priceCny: 99, credits: 1600000 },
-  { id: 'tier-499', priceCny: 499, credits: 9000000 },
-  { id: 'tier-999', priceCny: 999, credits: 20000000 },
+  { id: 'tier-10', priceCny: 10, credits: 200000 },
+  { id: 'tier-20', priceCny: 20, credits: 500000 },
+  { id: 'tier-49', priceCny: 49, credits: 1500000 },
+  { id: 'tier-99', priceCny: 99, credits: 3200000 },
+  { id: 'tier-499', priceCny: 499, credits: 18000000 },
+  { id: 'tier-999', priceCny: 999, credits: 40000000 },
 ] as const satisfies readonly GrsaiCreditTierDefinition[];
 
 export type GrsaiCreditTierId = (typeof GRSAI_CREDIT_TIERS)[number]['id'];

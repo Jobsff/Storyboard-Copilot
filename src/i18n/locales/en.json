@@ -96,6 +96,7 @@
     "aspectRatio": "Aspect Ratio",
     "transparentBackground": "Transparent background",
     "transparentBackgroundDesc": "Ask for transparent-background assets in the prompt; no transparent-background API parameter is sent upstream.",
+    "grsaiTransparentBackgroundDesc": "Sends background=transparent as a real API parameter to the GRSAI gateway for true RGBA output.",
     "enableWebSearch": "Enable web search",
     "otherParams": "Other Params",
     "extraOptions": "Extra options",
@@ -103,7 +104,9 @@
     "thinkingLevelDesc": "Only applies to fal Nano Banana 2. High thinking adds extra cost.",
     "thinkingDisabled": "Off",
     "thinkingMinimal": "Standard",
-    "thinkingHigh": "High"
+    "thinkingHigh": "High",
+    "autoRecommended": "Recommended",
+    "autoChainKeyRequiredDesc": "Smart Generate needs at least one image channel API key (GRSAI / 666API / JuyouAPI / KIE). Configure one in Settings first."
   },
   "gameAsset": {
     "menu": "Game asset templates",
@@ -212,7 +215,9 @@
       "waitingResult": "Waiting for output image",
       "waitingResultDelayed": "Already waited {{minutes}} minutes with no result yet. Still waiting...",
       "selectToEdit": "Select this node and enter a prompt below to generate or edit image",
-      "generationFailed": "Generation failed"
+      "generationFailed": "Generation failed",
+      "metaDuration": "{{seconds}}s",
+      "metaChainMode": "Smart chain"
     },
     "imageEdit": {
       "promptRequired": "Please enter a prompt",
@@ -308,10 +313,44 @@
     "generating": "Generating...",
     "success": "Generated successfully",
     "error": "Generation failed",
+    "chainKeyRequired": "No image channel API key configured: set up at least one channel (GRSAI / 666API, etc.) in Settings and try again",
     "autoPrompt": {
       "generating": "Reversing prompt...",
       "error": "Reverse prompt failed",
       "apiKeyRequired": "Please set 666API API key in Settings"
+    }
+  },
+  "errorAdvice": {
+    "title": {
+      "timeout": "Channel response timed out",
+      "channelDown": "Channel service unavailable",
+      "auth": "API key invalid or not configured",
+      "quota": "Insufficient channel balance",
+      "contentFilter": "Prompt may have triggered safety filtering",
+      "unknown": "Generation failed"
+    },
+    "body": {
+      "timeoutChain": "The chain already retried on the next channel automatically but still failed. Try again later, or pick a specific channel to connect directly.",
+      "timeoutSingle": "The channel is responding slowly. Try again later, or switch to Smart Generate.",
+      "channelDown": "The channel service is down (not your fault). Smart Generate is recommended — it automatically avoids failing channels. You can also retry later.",
+      "auth": "The API key is invalid or not configured. Check the channel API key in Settings and try again.",
+      "quota": "The channel balance is insufficient. Top up at the channel console, or switch to another configured channel.",
+      "contentFilter": "Chinese prompts occasionally get false-positive filtered. A direct retry usually passes; if it keeps failing, reword the prompt.",
+      "unknown": "Generation failed for an unknown reason. Try again later; if it persists, copy the details for feedback."
+    },
+    "action": {
+      "openSettings": "Open Settings",
+      "recharge": "Top up",
+      "retry": "Retry",
+      "probeChannels": "Check all channels"
+    },
+    "classLabel": {
+      "timeout": "Timeout",
+      "channel_down": "Channel down",
+      "auth": "Auth",
+      "quota": "Balance",
+      "content_filter": "Safety filter",
+      "unknown": "Unknown"
     }
   },
   "project": {
@@ -357,7 +396,45 @@
     "title": "Settings",
     "providers": "API Key",
     "providersDesc": "Configure AI provider API keys",
-    "customEndpoints": "Custom Endpoint",
+    "backendSyncFailed": "Some channel settings were not synced to the generation engine: {{channels}}",
+    "retryBackendSync": "Retry sync",
+    "channelHealth": {
+      "nav": "Channel Health",
+      "desc": "Connectivity and key status of each image channel; only model lists are fetched — checks never cost anything.",
+      "freeNote": "Checks never incur any generation cost",
+      "probeNow": "Re-check now",
+      "probing": "Checking…",
+      "statusProbing": "Checking…",
+      "ok": "Key valid, model list fetched",
+      "okWithChain": "Key valid, {{count}} chain models available",
+      "reachable": "Channel reachable, but key invalid or no model list",
+      "reachableNoModelList": "Gateway has no model-list endpoint (normal); key will be verified on generation",
+      "down": "Channel not responding; Smart Generate will avoid it",
+      "unconfigured": "No API key configured",
+      "neverChecked": "Not checked yet",
+      "latency": "{{ms}}ms",
+      "lastStatus": "Last check result",
+      "autoProbeOnLaunch": "Probe channels in background on launch (free)",
+      "footerNote": "Results stay on this machine and feed Smart Generate routing and soft demotion; the chain keeps its original order when all channels are down."
+    },
+    "history": {
+      "nav": "Generation History",
+      "desc": "Recent generation records (succeeded and failed), metadata only — no images.",
+      "summary": "{{count}} records",
+      "refresh": "Refresh",
+      "empty": "No generation records yet.",
+      "modeAuto": "Smart",
+      "modeManual": "Manual",
+      "statusSucceeded": "OK",
+      "statusFailed": "Failed",
+      "promptLabel": "Prompt",
+      "chainTrajectory": "Chain trajectory:",
+      "noTrajectory": "Single-channel job; no chain trajectory.",
+      "footerNote": "Only recent metadata is kept. Generated result images are cleaned up after 7 days — this list is not affected."
+    },
+    "customEndpoints": "NEWAPI Endpoint",
+    "joinChainSwitch": "Join smart fallback chain",
+    "joinChainSwitchDesc": "When enabled with a key configured, checked models whose names exactly match built-in chain members are appended as extra hops to the smart chain tail. Non-matching models never join.",
     "pricing": "Pricing",
     "pricingDesc": "Manage node price display, exchange rate conversion, and credit-pack estimates.",
     "providerGuideText": "Different providers vary in model capability, queue speed, stability, and pricing. Switch providers based on your task, and follow each provider's recommended parameters.",

@@ -1,8 +1,17 @@
+/** 行动按钮（错误行动化 · 模块 F）：由调用方构造（见 errorAdvice.buildErrorDialogActions）。 */
+export interface GlobalErrorDialogAction {
+  label: string;
+  variant?: 'primary' | 'muted';
+  onClick?: () => void;
+  href?: string;
+}
+
 export interface GlobalErrorDialogDetail {
   title: string;
   message: string;
   details?: string;
   copyText?: string;
+  actions?: GlobalErrorDialogAction[];
 }
 
 const OPEN_ERROR_DIALOG_EVENT = 'storyboard:open-error-dialog';

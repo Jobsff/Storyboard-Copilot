@@ -4,6 +4,8 @@ export const provider: ModelProviderDefinition = {
   id: '666api',
   name: '666API',
   label: '666API',
+  // 渠道情报一行定位（源：docs/settings/provider-guide.md）
+  advice: { zh: '最稳定的主力渠道，推荐常备', en: 'The most stable primary channel; recommended' },
 };
 
 export const API666_KEY_GROUPS = [

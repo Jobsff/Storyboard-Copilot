@@ -96,6 +96,7 @@
     "aspectRatio": "比例",
     "transparentBackground": "透明背景",
     "transparentBackgroundDesc": "通过提示词让模型尽量输出透明背景素材；不向上游发送透明背景 API 参数。",
+    "grsaiTransparentBackgroundDesc": "向 GRSAI 网关透传 background=transparent API 参数，直出真 RGBA 透明底。",
     "enableWebSearch": "启用联网搜索",
     "otherParams": "其他参数",
     "extraOptions": "额外参数",
@@ -103,7 +104,9 @@
     "thinkingLevelDesc": "仅对 fal 的 Nano Banana 2 生效；高思考会额外增加费用。",
     "thinkingDisabled": "关闭",
     "thinkingMinimal": "标准",
-    "thinkingHigh": "高"
+    "thinkingHigh": "高",
+    "autoRecommended": "推荐",
+    "autoChainKeyRequiredDesc": "智能出图需要至少一个生图渠道的 API Key（GRSAI / 666API / 巨游API / KIE 任一），请先到设置中配置。"
   },
   "gameAsset": {
     "menu": "游戏资产模板",
@@ -212,7 +215,9 @@
       "waitingResult": "等待输出结果图片",
       "waitingResultDelayed": "已经等待 {{minutes}} 分钟了，还没有结果。继续等待中...",
       "selectToEdit": "选中后在下方输入提示词生成或编辑图片",
-      "generationFailed": "生成失败"
+      "generationFailed": "生成失败",
+      "metaDuration": "{{seconds}} 秒",
+      "metaChainMode": "智能链"
     },
     "imageEdit": {
       "promptRequired": "请输入提示词",
@@ -308,10 +313,44 @@
     "generating": "生成中...",
     "success": "生成成功",
     "error": "生成失败",
+    "chainKeyRequired": "未配置生图渠道密钥：请在设置中配置 GRSAI / 666API 等任一渠道后重试",
     "autoPrompt": {
       "generating": "反推提示词中...",
       "error": "反推提示词失败",
       "apiKeyRequired": "请在设置中填写 666API 的 API Key"
+    }
+  },
+  "errorAdvice": {
+    "title": {
+      "timeout": "渠道响应超时",
+      "channelDown": "渠道服务异常",
+      "auth": "密钥无效或未配置",
+      "quota": "渠道余额不足",
+      "contentFilter": "提示词可能触发安全过滤",
+      "unknown": "生成失败"
+    },
+    "body": {
+      "timeoutChain": "链内已自动切换下一渠道重试仍未成功。建议稍后重试，或改用指定渠道直连。",
+      "timeoutSingle": "渠道响应慢，建议稍后重试或换用智能出图。",
+      "channelDown": "渠道服务异常（不是你的问题）。建议换用智能出图，会自动避开故障渠道；也可稍后重试。",
+      "auth": "密钥无效或未配置。请到设置中检查对应渠道的 API Key 后重试。",
+      "quota": "渠道余额不足。请前往渠道控制台充值，或换用其他已配置渠道。",
+      "contentFilter": "中文提示词偶发误杀，直接重试通常能过；仍失败请调整措辞后重新生成。",
+      "unknown": "生成失败，原因未知。可稍后重试；如反复出现，请复制详情反馈。"
+    },
+    "action": {
+      "openSettings": "打开设置",
+      "recharge": "去充值",
+      "retry": "重试",
+      "probeChannels": "检测所有渠道"
+    },
+    "classLabel": {
+      "timeout": "超时",
+      "channel_down": "渠道异常",
+      "auth": "密钥",
+      "quota": "余额",
+      "content_filter": "安全过滤",
+      "unknown": "未知"
     }
   },
   "project": {
@@ -357,7 +396,45 @@
     "title": "设置",
     "providers": "密钥",
     "providersDesc": "配置 AI 服务商的 API 密钥",
-    "customEndpoints": "自定义接口",
+    "backendSyncFailed": "部分渠道配置未同步到生成引擎：{{channels}}",
+    "retryBackendSync": "重试同步",
+    "channelHealth": {
+      "nav": "渠道健康",
+      "desc": "各生图渠道的连通性与密钥状态；只拉模型列表，检测不会产生任何生成费用。",
+      "freeNote": "检测不会产生任何生成费用",
+      "probeNow": "立即重新检测",
+      "probing": "检测中…",
+      "statusProbing": "检测中…",
+      "ok": "密钥有效，模型列表拉取成功",
+      "okWithChain": "密钥有效，智能链 {{count}} 个链上模型可用",
+      "reachable": "渠道可达，但密钥无效或无模型列表",
+      "reachableNoModelList": "网关无模型列表接口（正常），密钥将于生成时验证",
+      "down": "渠道无响应，智能出图会自动避开",
+      "unconfigured": "未配置密钥",
+      "neverChecked": "尚未检测",
+      "latency": "{{ms}}ms",
+      "lastStatus": "最近检测结果",
+      "autoProbeOnLaunch": "启动时后台自动检测渠道（零费用）",
+      "footerNote": "结果仅本机记录，用于智能出图选路与软降权；渠道全 down 时链保持原序。"
+    },
+    "history": {
+      "nav": "生成记录",
+      "desc": "最近生成台账（成功与失败），纯元数据不含图片。",
+      "summary": "共 {{count}} 条记录",
+      "refresh": "刷新",
+      "empty": "暂无生成记录。",
+      "modeAuto": "智能链",
+      "modeManual": "手动",
+      "statusSucceeded": "成功",
+      "statusFailed": "失败",
+      "promptLabel": "提示词",
+      "chainTrajectory": "链轨迹：",
+      "noTrajectory": "单点直连任务，无链轨迹。",
+      "footerNote": "仅保留最近生成的元数据台账；生成结果图片 7 天后自动清理，不影响本列表。"
+    },
+    "customEndpoints": "NEWAPI 接口",
+    "joinChainSwitch": "加入智能出图降级链",
+    "joinChainSwitchDesc": "开启且已配置密钥后，勾选模型中与内置链同名的模型会作为额外档追加到智能链末尾兜底；不同名不进链。",
     "pricing": "价格",
     "pricingDesc": "管理节点价格展示、汇率换算和积分套餐估算。",
     "providerGuideText": "不同供应商在模型能力、队列速度、稳定性和价格上可能有差异。建议按当前任务场景切换供应商，并优先使用对应官方文档中的推荐参数。",

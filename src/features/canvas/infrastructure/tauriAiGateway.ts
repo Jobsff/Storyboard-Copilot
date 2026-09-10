@@ -59,6 +59,13 @@ export const tauriAiGateway: AiGateway = {
       aspect_ratio: payload.aspectRatio,
       reference_images: normalizedReferenceImages,
       extra_params: payload.extraParams,
+      fallback: payload.fallback
+        ? {
+          quality: payload.fallback.quality,
+          available_providers: payload.fallback.availableProviders,
+          extra_hops: payload.fallback.extraHops,
+        }
+        : undefined,
     });
   },
   getGenerateImageJob,

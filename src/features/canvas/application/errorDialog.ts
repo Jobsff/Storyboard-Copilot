@@ -1,4 +1,4 @@
-import { openGlobalErrorDialog } from '@/features/app/errorDialogEvents';
+import { openGlobalErrorDialog, type GlobalErrorDialogAction } from '@/features/app/errorDialogEvents';
 
 export interface ResolvedErrorContent {
   message: string;
@@ -69,7 +69,8 @@ export async function showErrorDialog(
   text: string,
   title: string,
   details?: string,
-  copyText?: string
+  copyText?: string,
+  actions?: GlobalErrorDialogAction[]
 ): Promise<void> {
   const content = text.trim();
   if (!content) {
@@ -81,5 +82,6 @@ export async function showErrorDialog(
     message: content,
     details: details?.trim() || undefined,
     copyText: copyText?.trim() || undefined,
+    actions: actions?.length ? actions : undefined,
   });
 }

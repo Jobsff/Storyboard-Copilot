@@ -143,6 +143,12 @@ pub fn run() {
             }
 
             let app_handle = app.handle().clone();
+            // media 落盘目录过期清理（>7 天删除）。后台执行，失败仅日志不阻断启动。
+            let cleanup_handle = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                crate::ai::media_store::cleanup_expired_media(&cleanup_handle);
+            });
+
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(FRONTEND_READY_TIMEOUT_MS)).await;
 
@@ -197,7 +203,10 @@ pub fn run() {
             ai_commands::get_generate_video_job,
             ai_commands::generate_image,
             ai_commands::list_models,
+            ai_commands::list_generation_history,
             ai_commands::list_provider_models,
+            ai_commands::probe_channels,
+            ai_commands::list_channel_health,
             ai_commands::register_custom_endpoint,
             ai_commands::remove_custom_endpoint,
             project_state::list_project_summaries,

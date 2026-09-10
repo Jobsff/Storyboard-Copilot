@@ -1,4 +1,8 @@
+pub mod chain;
 pub mod error;
+pub mod error_classify;
+pub mod http;
+pub mod media_store;
 pub mod providers;
 
 use std::collections::{HashMap, HashSet};
@@ -6,8 +10,11 @@ use std::sync::{Arc, RwLock};
 use tracing::info;
 
 use error::AIError;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone)]
+/// serde derives：降级链需把原始请求序列化进 ai_generation_jobs.chain_meta_json
+/// （hop 重提交以此为底、仅替换模型名；终态剥除，见 ai/chain.rs）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateRequest {
     pub prompt: String,
     pub model: String,

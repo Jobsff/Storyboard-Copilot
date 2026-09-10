@@ -119,7 +119,7 @@ struct OpenAiChatCompletionMessage {
 impl Api666Provider {
     pub fn new() -> Self {
         Self {
-            client: Client::new(),
+            client: crate::ai::http::http_client().clone(),
             api_key: Arc::new(RwLock::new(None)),
             base_url: Arc::new(RwLock::new("https://www.666api.ai".to_string())),
             provider_id: "666api".to_string(),
@@ -128,7 +128,7 @@ impl Api666Provider {
 
     pub fn new_with_config(provider_id: &str, base_url: &str) -> Self {
         Self {
-            client: Client::new(),
+            client: crate::ai::http::http_client().clone(),
             api_key: Arc::new(RwLock::new(None)),
             base_url: Arc::new(RwLock::new(base_url.to_string())),
             provider_id: provider_id.to_string(),
@@ -1835,6 +1835,20 @@ impl AIProvider for Api666Provider {
                 format!("{}gemini-3-pro-image-preview", prefix),
                 format!("{}gpt-image-2", prefix),
                 format!("{}wan2.6-i2v-flash", prefix),
+            ]
+        } else if self.provider_id == "aifast" {
+            // aifast 固定清单（批次9，静态写死）：源 image-studio 技能 .env 实测（企业渠道）。
+            // 批次9 补丁（2026-09-11 真实 key smoke 实证）：gpt-image-2 503 model_not_found 移除；
+            // gemini-3.1-flash-image（无后缀）chat-completions 200 出图复活加回。
+            // 顺序与前端 models/image/aifast/modelNames.ts 一致。
+            vec![
+                format!("{}gemini-3-pro-image-preview-token", prefix),
+                format!("{}gemini-3-pro-image-preview", prefix),
+                format!("{}gemini-3-pro-image-preview-hy", prefix),
+                format!("{}gemini-3.1-flash-image-preview-token", prefix),
+                format!("{}gemini-3.1-flash-image-preview-hy", prefix),
+                format!("{}gemini-3.1-flash-image", prefix),
+                format!("{}gemini-3.1-flash-lite-image", prefix),
             ]
         } else {
             vec![

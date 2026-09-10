@@ -67,9 +67,33 @@ export type ExportImageNodeResultKind =
   | 'storyboardSplitExport'
   | 'storyboardFrameEdit';
 
+/** 一次链 hop 尝试（Rust ChainAttempt 对齐；前端仅展示用）。 */
+export interface GenerationAttemptMeta {
+  providerId: string;
+  model: string;
+  errorClass?: string;
+  error?: string;
+}
+
+/** 成功生成的执行元数据（模块 D UI：命中渠道/耗时/链轨迹角标）。 */
+export interface GenerationMeta {
+  providerId?: string | null;
+  model?: string | null;
+  /** 提交到成功的前端耗时（节点 startedAt 差值）。 */
+  durationMs?: number | null;
+  /** auto=智能链（有 fallback，含空链退化），manual=单点直连。 */
+  mode?: 'auto' | 'manual';
+  /** 链轨迹（单点为空）。 */
+  attempts?: GenerationAttemptMeta[];
+}
+
 export interface ExportImageNodeData extends NodeImageData {
   resultKind?: ExportImageNodeResultKind;
   uiAssetMeta?: UiAssetNodeMeta;
+  /** running 态中间异常（链切换/渠道连续无响应等）：生成中状态条下的黄色小字，不打断。 */
+  generationRunningError?: string | null;
+  /** 成功终态元数据（批次5）：结果图角落小徽标。 */
+  generationMeta?: GenerationMeta | null;
 }
 
 export interface GroupNodeData extends NodeDisplayData {

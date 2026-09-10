@@ -10,12 +10,16 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import {
   useSettingsStore,
   generateCustomEndpointId,
+  syncBackendSettings,
+  AIFAST_BASE_URL,
+  AIFAST_PROVIDER_ID,
   type CustomEndpoint,
 } from '@/stores/settingsStore';
 import { UiCheckbox, UiSelect } from '@/components/ui';
 import { UI_CONTENT_OVERLAY_INSET_CLASS, UI_DIALOG_TRANSITION_MS } from '@/components/ui/motion';
 import { useDialogTransition } from '@/components/ui/useDialogTransition';
 import {
+  listImageModels,
   listModelProviders,
   registerRuntimeEndpoint,
   unregisterRuntimeEndpoint,
@@ -35,6 +39,8 @@ import {
 import { GRSAI_CREDIT_TIERS } from '@/features/canvas/pricing/types';
 import providerGuideMarkdown from '../../docs/settings/provider-guide.md?raw';
 import type { SettingsCategory } from '@/features/settings/settingsEvents';
+import { GenerationHistoryPanel } from '@/features/settings/GenerationHistoryPanel';
+import { ChannelHealthPanel } from '@/features/settings/ChannelHealthPanel';
 
 interface SettingsDialogProps {
   isOpen: boolean;
@@ -166,6 +172,8 @@ export function SettingsDialog({
     canvasEdgeRoutingMode,
     autoCheckAppUpdateOnLaunch,
     enableUpdateDialog,
+    backendSyncErrors,
+    setBackendSyncErrors,
     customEndpoints,
     setProviderApiKey,
     setJuyouapiBaseUrl,
@@ -197,9 +205,13 @@ export function SettingsDialog({
     updateCustomEndpoint,
     removeCustomEndpoint,
     setCustomEndpointModels,
+    aifastJoinChain,
+    setAifastJoinChain,
   } = useSettingsStore();
   const providers = useMemo(() => {
-    const providerOrder = ['kie', 'ppio', 'fal', 'grsai'];
+    // 批次8 渠道顺序：grsai → aifast → 666api → juyouapi → agnes → ollama；
+    // 运行时 NEWAPI 接口（newapi_*）垫底。与专家模式 Tab / 健康面板三处一致。
+    const providerOrder = ['grsai', 'aifast', '666api', 'juyouapi', 'agnes', 'ollama'];
     const providerIndex = new Map(providerOrder.map((id, index) => [id, index]));
     return listModelProviders().slice().sort((left, right) => {
       const leftIndex = providerIndex.get(left.id) ?? Number.MAX_SAFE_INTEGER;
@@ -208,6 +220,22 @@ export function SettingsDialog({
     });
   }, []);
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>(initialCategory);
+  const [isRetryingSync, setIsRetryingSync] = useState(false);
+  const handleRetryBackendSync = useCallback(async () => {
+    if (isRetryingSync) {
+      return;
+    }
+    setIsRetryingSync(true);
+    try {
+      // 重试与启动时同一同步路径；成功即清空，失败项原样透出（不做弹窗轰炸）。
+      const failures = await syncBackendSettings(useSettingsStore.getState());
+      setBackendSyncErrors(failures);
+    } catch {
+      setBackendSyncErrors(['ai']);
+    } finally {
+      setIsRetryingSync(false);
+    }
+  }, [isRetryingSync, setBackendSyncErrors]);
   const [appVersion, setAppVersion] = useState<string>('');
   const [localApiKeys, setLocalApiKeys] = useState<Record<string, string>>(apiKeys);
   const [localGrsaiNanoBananaProModel, setLocalGrsaiNanoBananaProModel] = useState(
@@ -529,6 +557,7 @@ export function SettingsDialog({
       name: '',
       baseUrl: '',
       selectedModels: [],
+      joinChain: false,
     };
     addCustomEndpoint(endpoint);
     // Nothing to sync to Rust yet (no base URL / key).
@@ -631,6 +660,10 @@ export function SettingsDialog({
     },
     [localApiKeys, setCustomEndpointModels]
   );
+
+  // --- aifast（预置 NEWAPI 槽位）----------------------------------------------
+  // 批次9：模型改静态清单（models/image/aifast/），不再提供「获取模型」勾选；
+  // 卡片只保留固定 base + 密钥 + 入链开关 + 静态模型只读展示。
 
   const handleMarkdownLinkClick = useCallback((href?: string) => {
     if (!href) {
@@ -739,6 +772,34 @@ export function SettingsDialog({
               </button>
 
               <button
+                onClick={() => setActiveCategory('health')}
+                className={`
+                w-full flex items-center gap-3 px-4 py-2.5 text-left
+                transition-colors
+                ${activeCategory === 'health'
+                    ? 'bg-accent/10 text-text-dark border-l-2 border-accent'
+                    : 'text-text-muted hover:bg-bg-dark hover:text-text-dark'
+                  }
+              `}
+              >
+                <span className="text-sm">{t('settings.channelHealth.nav')}</span>
+              </button>
+
+              <button
+                onClick={() => setActiveCategory('history')}
+                className={`
+                w-full flex items-center gap-3 px-4 py-2.5 text-left
+                transition-colors
+                ${activeCategory === 'history'
+                    ? 'bg-accent/10 text-text-dark border-l-2 border-accent'
+                    : 'text-text-muted hover:bg-bg-dark hover:text-text-dark'
+                  }
+              `}
+              >
+                <span className="text-sm">{t('settings.history.nav')}</span>
+              </button>
+
+              <button
                 onClick={() => setActiveCategory('experimental')}
                 className={`
                 w-full flex items-center gap-3 px-4 py-2.5 text-left
@@ -770,6 +831,21 @@ export function SettingsDialog({
 
           {/* Content */}
           <div className="flex-1 flex flex-col">
+            {backendSyncErrors.length > 0 && (
+              <div className="flex items-center gap-3 border-b border-amber-400/30 bg-amber-500/10 px-6 py-2.5">
+                <span className="min-w-0 flex-1 text-xs leading-4 text-amber-300">
+                  {t('settings.backendSyncFailed', { channels: backendSyncErrors.join('、') })}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void handleRetryBackendSync()}
+                  disabled={isRetryingSync}
+                  className="shrink-0 rounded border border-amber-400/40 bg-amber-500/10 px-2.5 py-1 text-xs text-amber-200 transition-colors hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {t('settings.retryBackendSync')}
+                </button>
+              </div>
+            )}
             {activeCategory === 'customEndpoints' && (
               <>
                 <div className="px-6 py-5 border-b border-border-dark flex items-center justify-between">
@@ -779,8 +855,8 @@ export function SettingsDialog({
                     </h2>
                     <p className="text-xs text-text-muted mt-1">
                       {i18n.language.startsWith('zh')
-                        ? '添加任意 NewAPI / OpenAI 兼容接口，获取并勾选需要的模型即可在画布使用。'
-                        : 'Add any NewAPI / OpenAI-compatible endpoint, fetch and check the models you need.'}
+                        ? '用于添加 NEWAPI / OpenAI 兼容格式的中转商，获取并勾选需要的模型即可在画布使用。'
+                        : 'Add NEWAPI / OpenAI-compatible relay providers, fetch and check the models you need.'}
                     </p>
                   </div>
                   <button
@@ -796,8 +872,8 @@ export function SettingsDialog({
                   {customEndpoints.length === 0 && (
                     <div className="rounded-lg border border-dashed border-border-dark p-6 text-center text-sm text-text-muted">
                       {i18n.language.startsWith('zh')
-                        ? '尚未添加自定义接口。点击右上角「添加接口」开始。'
-                        : 'No custom endpoints yet. Click "Add endpoint" to start.'}
+                        ? '尚未添加 NEWAPI 接口。点击右上角「添加接口」开始。'
+                        : 'No NEWAPI endpoints yet. Click "Add endpoint" to start.'}
                     </div>
                   )}
 
@@ -947,6 +1023,24 @@ export function SettingsDialog({
                             })}
                           </div>
                         )}
+
+                        <label className="flex cursor-pointer items-start gap-2.5 rounded border border-border-dark bg-surface-dark px-3 py-2">
+                          <UiCheckbox
+                            checked={endpoint.joinChain}
+                            onCheckedChange={(checked) =>
+                              handleUpdateCustomEndpoint(endpoint.id, { joinChain: checked })
+                            }
+                            className="mt-0.5 shrink-0"
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-xs font-medium text-text-dark">
+                              {t('settings.joinChainSwitch')}
+                            </span>
+                            <span className="mt-0.5 block text-[11px] leading-4 text-text-muted">
+                              {t('settings.joinChainSwitchDesc')}
+                            </span>
+                          </span>
+                        </label>
                       </div>
                     );
                   })}
@@ -1067,6 +1161,10 @@ export function SettingsDialog({
 
                   {providers.map((provider) => {
                     const displayName = i18n.language.startsWith('zh') ? provider.label : provider.name;
+                    // 渠道情报一行定位（模块 E 第4条；provider 定义内 zh/en 直取）
+                    const providerAdvice = provider.advice
+                      ? (i18n.language.startsWith('zh') ? provider.advice.zh : provider.advice.en)
+                      : null;
 
                     if (provider.id === '666api') {
                       return (
@@ -1074,6 +1172,9 @@ export function SettingsDialog({
                           <div className="mb-3">
                             <h3 className="text-sm font-medium text-text-dark">{displayName}</h3>
                             <p className="text-xs text-text-muted">{t('settings.api666KeyGroupDesc')}</p>
+                            {providerAdvice && (
+                              <p className="mt-1 text-[11px] leading-4 text-text-muted/80">{providerAdvice}</p>
+                            )}
                           </div>
                           <div className="space-y-3">
                             {API666_KEY_GROUPS.map((group) => {
@@ -1127,6 +1228,9 @@ export function SettingsDialog({
                         <div key={provider.id} className="rounded-lg border border-border-dark bg-bg-dark p-4">
                           <div className="mb-3">
                             <h3 className="text-sm font-medium text-text-dark">巨游API</h3>
+                            {providerAdvice && (
+                              <p className="mt-1 text-[11px] leading-4 text-text-muted/80">{providerAdvice}</p>
+                            )}
                           </div>
                           <div className="mb-3">
                             <div className="mb-1 text-xs font-medium text-text-muted">{t('settings.juyouapiBaseUrl')}</div>
@@ -1195,6 +1299,9 @@ export function SettingsDialog({
                                 ? '本地部署的 Ollama 模型服务'
                                 : 'Locally deployed Ollama model service'}
                             </p>
+                            {providerAdvice && (
+                              <p className="mt-1 text-[11px] leading-4 text-text-muted/80">{providerAdvice}</p>
+                            )}
                           </div>
                           <div className="mb-3">
                             <div className="mb-1 text-xs font-medium text-text-muted">{t('settings.ollamaBaseUrl')}</div>
@@ -1271,6 +1378,111 @@ export function SettingsDialog({
                       );
                     }
 
+                    if (provider.id === 'aifast') {
+                      const isAifastKeyRevealed = Boolean(revealedApiKeys[AIFAST_PROVIDER_ID]);
+                      const aifastStaticModels = listImageModels().filter(
+                        (model) => model.providerId === AIFAST_PROVIDER_ID
+                      );
+                      return (
+                        <div key={provider.id} className="rounded-lg border border-border-dark bg-bg-dark p-4">
+                          <div className="mb-3">
+                            <h3 className="text-sm font-medium text-text-dark">aifast</h3>
+                            <p className="text-xs text-text-muted mt-1">
+                              {i18n.language.startsWith('zh')
+                                ? '预置 NEWAPI 接口：填写密钥即可使用内置实测模型清单。'
+                                : 'Built-in NEWAPI endpoint: enter your key to use the built-in curated model list.'}
+                            </p>
+                            {providerAdvice && (
+                              <p className="mt-1 text-[11px] leading-4 text-text-muted/80">{providerAdvice}</p>
+                            )}
+                          </div>
+                          <div className="mb-3">
+                            <div className="mb-1 text-xs font-medium text-text-muted">
+                              {i18n.language.startsWith('zh') ? '接口地址（固定）' : 'Base URL (fixed)'}
+                            </div>
+                            <input
+                              type="text"
+                              value={AIFAST_BASE_URL}
+                              readOnly
+                              className="w-full cursor-not-allowed rounded border border-border-dark bg-surface-dark/60 px-3 py-2 text-sm text-text-muted"
+                            />
+                          </div>
+                          <div className="mb-3">
+                            <div className="mb-1 text-xs font-medium text-text-muted">{t('settings.enterApiKey')}</div>
+                            <div className="relative">
+                              <input
+                                type={isAifastKeyRevealed ? 'text' : 'password'}
+                                value={localApiKeys[AIFAST_PROVIDER_ID] ?? ''}
+                                onChange={(event) => {
+                                  const nextValue = event.target.value;
+                                  setLocalApiKeys((previous) => ({
+                                    ...previous,
+                                    [AIFAST_PROVIDER_ID]: nextValue,
+                                  }));
+                                  setProviderApiKey(AIFAST_PROVIDER_ID, nextValue);
+                                }}
+                                placeholder={t('settings.enterApiKey')}
+                                className="w-full rounded border border-border-dark bg-surface-dark px-3 py-2 pr-10 text-sm text-text-dark placeholder:text-text-muted"
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setRevealedApiKeys((previous) => ({
+                                    ...previous,
+                                    [AIFAST_PROVIDER_ID]: !previous[AIFAST_PROVIDER_ID],
+                                  }))
+                                }
+                                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 hover:bg-bg-dark"
+                              >
+                                {isAifastKeyRevealed ? (
+                                  <EyeOff className="h-4 w-4 text-text-muted" />
+                                ) : (
+                                  <Eye className="h-4 w-4 text-text-muted" />
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                          {aifastStaticModels.length > 0 && (
+                            <div className="mb-3">
+                              <div className="mb-1 text-xs font-medium text-text-muted">
+                                {i18n.language.startsWith('zh') ? '内置模型' : 'Built-in models'}
+                              </div>
+                              <div className="rounded border border-border-dark bg-surface-dark p-2">
+                                {aifastStaticModels.map((model) => (
+                                  <div
+                                    key={model.id}
+                                    className="flex items-center justify-between gap-2 px-2 py-1"
+                                  >
+                                    <span className="min-w-0 truncate text-xs text-text-dark">
+                                      {model.displayName}
+                                    </span>
+                                    <span className="shrink-0 text-[10px] text-text-muted/70">
+                                      {model.id.split('/')[1]}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          <label className="flex cursor-pointer items-start gap-2.5 rounded border border-border-dark bg-surface-dark px-3 py-2">
+                            <UiCheckbox
+                              checked={aifastJoinChain}
+                              onCheckedChange={(checked) => setAifastJoinChain(checked)}
+                              className="mt-0.5 shrink-0"
+                            />
+                            <span className="min-w-0">
+                              <span className="block text-xs font-medium text-text-dark">
+                                {t('settings.joinChainSwitch')}
+                              </span>
+                              <span className="mt-0.5 block text-[11px] leading-4 text-text-muted">
+                                {t('settings.joinChainSwitchDesc')}
+                              </span>
+                            </span>
+                          </label>
+                        </div>
+                      );
+                    }
+
                     const isRevealed = Boolean(revealedApiKeys[provider.id]);
 
                     return (
@@ -1300,6 +1512,9 @@ export function SettingsDialog({
                             </p>
                           ) : (
                             <p className="text-xs text-text-muted">{provider.id}</p>
+                          )}
+                          {providerAdvice && (
+                            <p className="mt-1 text-[11px] leading-4 text-text-muted/80">{providerAdvice}</p>
                           )}
                         </div>
 
@@ -1728,6 +1943,34 @@ export function SettingsDialog({
                     {t('common.save')}
                   </button>
                 </div>
+              </>
+            )}
+
+            {activeCategory === 'health' && (
+              <>
+                <div className="px-6 py-5 border-b border-border-dark">
+                  <h2 className="text-lg font-semibold text-text-dark">
+                    {t('settings.channelHealth.nav')}
+                  </h2>
+                  <p className="text-sm text-text-muted mt-1">
+                    {t('settings.channelHealth.desc')}
+                  </p>
+                </div>
+                <ChannelHealthPanel />
+              </>
+            )}
+
+            {activeCategory === 'history' && (
+              <>
+                <div className="px-6 py-5 border-b border-border-dark">
+                  <h2 className="text-lg font-semibold text-text-dark">
+                    {t('settings.history.nav')}
+                  </h2>
+                  <p className="text-sm text-text-muted mt-1">
+                    {t('settings.history.desc')}
+                  </p>
+                </div>
+                <GenerationHistoryPanel />
               </>
             )}
 

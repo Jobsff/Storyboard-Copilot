@@ -43,6 +43,10 @@ import {
 } from '@/features/canvas/application/generationErrorReport';
 import { resolveErrorContent, showErrorDialog } from '@/features/canvas/application/errorDialog';
 import {
+  resolveErrorAdvice,
+  showActionableErrorDialog,
+} from '@/features/canvas/application/errorAdvice';
+import {
   getConnectMenuNodeTypes,
   nodeHasSourceHandle,
   nodeHasTargetHandle,
@@ -56,7 +60,9 @@ import {
   syncCustomEndpointsFromStore,
 } from '@/features/canvas/models';
 import { API666_GPT_IMAGE_2_MODEL_ID } from '@/features/canvas/models/image/api666/gptImage2';
+import { AUTO_PROVIDER_ID } from '@/features/canvas/models/image/auto/autoCapabilities';
 import { resolve666ApiKey, API666_KEY_GROUPS } from '@/features/canvas/models/providers/api666';
+import { buildAutoImageFallback, injectChainApiKeys } from '@/features/canvas/application/imageFallback';
 import { nodeTypes } from './nodes';
 import { edgeTypes } from './edges';
 import { NodeSelectionMenu } from './NodeSelectionMenu';
@@ -332,6 +338,7 @@ export function Canvas() {
 
   // Reconcile runtime custom-endpoint providers/models whenever the persisted
   // customEndpoints change, so the canvas model pickers stay in sync.
+  // （批次9：aifast 改静态清单，不再走运行时注册。）
   useEffect(() => {
     syncCustomEndpointsFromStore(customEndpoints);
   }, [customEndpoints]);
@@ -506,6 +513,17 @@ export function Canvas() {
             }
 
             if (status.status === 'queued' || status.status === 'running') {
+              // running 态中间异常（链切换/渠道连续无响应）：节点生成中状态条下小字展示，
+              // 不打断、不弹窗——让美术看见"引擎在干什么"。仅在内容变化时写节点。
+              const runningError = status.error ?? '';
+              if (
+                runningError &&
+                runningError !== (typeof currentData.generationRunningError === 'string'
+                  ? currentData.generationRunningError
+                  : '')
+              ) {
+                updateNodeData(pendingNode.id, { generationRunningError: runningError });
+              }
               await sleep(GENERATION_JOB_POLL_INTERVAL_MS);
               continue;
             }
@@ -522,6 +540,7 @@ export function Canvas() {
                   generationStoryboardMetadata: undefined,
                   generationError: null,
                   generationErrorDetails: null,
+                  generationRunningError: null,
                 });
                 break;
               }
@@ -551,6 +570,20 @@ export function Canvas() {
                 ? imageWithMetadata
                 : prepared.previewImageUrl;
 
+              // 成功终态 generationMeta（模块 D UI）：实际命中渠道/模型/耗时/链轨迹。
+              const metaStartedAt = typeof currentData.generationStartedAt === 'number'
+                ? currentData.generationStartedAt
+                : null;
+              const metaRequestModel = (currentData.generationDebugContext as { requestModel?: string } | undefined)
+                ?.requestModel ?? '';
+              const generationMeta = {
+                providerId: status.provider_id ?? null,
+                model: status.model ?? null,
+                durationMs: metaStartedAt !== null ? Math.max(0, Date.now() - metaStartedAt) : null,
+                mode: (metaRequestModel.startsWith('auto/') ? 'auto' : 'manual') as 'auto' | 'manual',
+                attempts: status.attempts,
+              };
+
               updateNodeData(pendingNode.id, {
                 imageUrl: imageWithMetadata,
                 previewImageUrl: previewWithMetadata,
@@ -563,6 +596,8 @@ export function Canvas() {
                 generationStoryboardMetadata: undefined,
                 generationError: null,
                 generationErrorDetails: null,
+                generationRunningError: null,
+                generationMeta,
               });
               break;
             }
@@ -578,7 +613,20 @@ export function Canvas() {
                 errorDetails: status.error ?? undefined,
                 context: currentData.generationDebugContext,
               });
-              void showErrorDialog(errorMessage, t('common.error'), status.error ?? undefined, reportText);
+              // 错误行动化（模块 F）：人话标题/正文 + 行动按钮；原文/报告折叠进详情与复制。
+              const debugContext = currentData.generationDebugContext as { requestModel?: string; providerId?: string } | undefined;
+              const advice = resolveErrorAdvice({
+                errorClass: status.error_class ?? null,
+                message: errorMessage,
+                providerId: debugContext?.providerId ?? status.provider_id ?? null,
+                isChain: (debugContext?.requestModel ?? '').startsWith('auto/'),
+              });
+              showActionableErrorDialog({
+                advice,
+                translate: t,
+                originalMessage: errorMessage,
+                reportText,
+              });
             }
             updateNodeData(pendingNode.id, {
               isGenerating: false,
@@ -589,6 +637,7 @@ export function Canvas() {
               generationStoryboardMetadata: undefined,
               generationError: errorMessage,
               generationErrorDetails: status.error ?? null,
+              generationRunningError: null,
             });
             break;
           }
@@ -1141,12 +1190,22 @@ export function Canvas() {
     async (subject: string, prompt: string, preset: UiAssetPreset) => {
       const modelId = preset.modelConfig.modelId ?? DEFAULT_IMAGE_MODEL_ID;
       const selectedModel = getImageModel(modelId);
+      // 智能出图（auto/*）不绑定单一渠道 key：改查降级链可用渠道，空链直接拦截。
+      const isAutoModel = selectedModel.providerId === AUTO_PROVIDER_ID;
+      const autoFallback = isAutoModel
+        ? buildAutoImageFallback(modelId, apiKeys, useSettingsStore.getState())
+        : null;
+      if (isAutoModel && !autoFallback) {
+        const errorMessage = t('ai.chainKeyRequired');
+        void showErrorDialog(errorMessage, t('common.error'));
+        return;
+      }
       const providerApiKey = selectedModel.providerId === '666api'
-        ? resolve666ApiKey(modelId, apiKeys)
+        ? (resolve666ApiKey(modelId, apiKeys) ?? '')
         : selectedModel.providerId === 'juyouapi'
           ? apiKeys['juyouapi']
           : (apiKeys[selectedModel.providerId] ?? '');
-      if (!providerApiKey) {
+      if (!isAutoModel && !providerApiKey) {
         const errorMessage = t('node.imageEdit.apiKeyRequired');
         void showErrorDialog(errorMessage, t('common.error'));
         return;
@@ -1182,7 +1241,12 @@ export function Canvas() {
       setUiAssetDialogPresetId(null);
 
       try {
-        await canvasAiGateway.setApiKey(selectedModel.providerId, providerApiKey);
+        if (!isAutoModel) {
+          await canvasAiGateway.setApiKey(selectedModel.providerId, providerApiKey);
+        } else if (autoFallback) {
+          // 链任务 hop 会换渠道：提交前把链内所有渠道 key 预注入 Rust
+          await injectChainApiKeys(apiKeys, autoFallback.availableProviders);
+        }
         const requestResolution = resolveImageModelResolution(
           selectedModel,
           preset.modelConfig.requestSize
@@ -1195,6 +1259,12 @@ export function Canvas() {
           aspectRatio: preset.modelConfig.aspectRatio,
           referenceImages: [],
           extraParams: {},
+          fallback: autoFallback
+            ? {
+              quality: autoFallback.quality,
+              availableProviders: autoFallback.availableProviders,
+            }
+            : undefined,
         });
 
         updateNodeData(newNodeId, {

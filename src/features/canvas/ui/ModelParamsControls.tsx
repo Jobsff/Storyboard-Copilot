@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SlidersHorizontal, Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -10,6 +10,13 @@ import {
   type ImageModelDefinition,
   type ResolutionOption,
 } from '@/features/canvas/models';
+import { AUTO_PROVIDER_ID, AUTO_STANDARD_IMAGE_MODEL_ID } from '@/features/canvas/models/image/auto/autoCapabilities';
+import {
+  fetchChannelHealthCached,
+  getCachedChannelHealth,
+  resolveChainAvailableProviders,
+} from '@/features/canvas/application/imageFallback';
+import type { ChannelProbeResult } from '@/commands/ai';
 import {
   UiChipButton,
   UiModal,
@@ -165,7 +172,7 @@ export const ModelParamsControls = memo(({
   providerOptionClassName = DEFAULT_PROVIDER_OPTION_CLASS_NAME,
   modelOptionClassName = DEFAULT_MODEL_OPTION_CLASS_NAME,
 }: ModelParamsControlsProps) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
   const modelTriggerRef = useRef<HTMLDivElement>(null);
   const paramsTriggerRef = useRef<HTMLDivElement>(null);
@@ -184,7 +191,26 @@ export const ModelParamsControls = memo(({
   const [otherParamsAnchorBaseWidth, setOtherParamsAnchorBaseWidth] = useState<number | null>(null);
   const [panelProviderId, setPanelProviderId] = useState(selectedModel.providerId);
   const [missingKeyProviderName, setMissingKeyProviderName] = useState<string | null>(null);
+  const [missingKeyIsAutoChain, setMissingKeyIsAutoChain] = useState(false);
   const apiKeys = useSettingsStore((state) => state.apiKeys);
+  // 渠道健康最近结果（供应商 Tab 小圆点；只读缓存台账，绝不触发探测）。
+  const [channelHealth, setChannelHealth] = useState<ChannelProbeResult[] | null>(
+    () => getCachedChannelHealth()
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchChannelHealthCached().then((rows) => {
+      if (!cancelled) {
+        setChannelHealth(rows);
+      }
+    }).catch(() => {
+      // 台账读取失败 = 无数据 = 灰点，静默即可。
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const selectedProvider = useMemo(
     () => getModelProvider(selectedModel.providerId),
@@ -196,7 +222,9 @@ export const ModelParamsControls = memo(({
   );
   const selectedProviderName = selectedProvider.label || selectedProvider.name;
   const providerOptions = useMemo(() => {
-    const providerOrder = ['kie', 'ppio', 'fal', 'grsai'];
+    // 智能出图（auto）置顶为推荐项；展示顺序与设置页密钥区/健康面板三处一致（批次8）；
+    // hidden 供应商的模型不会出现在 imageModels 中。
+    const providerOrder = ['auto', 'grsai', 'aifast', '666api', 'juyouapi', 'agnes', 'ollama'];
     const providerIndex = new Map(providerOrder.map((id, index) => [id, index]));
     const uniqueProviderIds = Array.from(new Set(imageModels.map((model) => model.providerId)));
     return uniqueProviderIds
@@ -225,6 +253,32 @@ export const ModelParamsControls = memo(({
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [providerModels]);
   const isCompactTrigger = triggerSize === 'sm';
+  // 渠道健康圆点：ok=绿 / reachable=黄 / down=红 / 无数据=灰（不触发探测）。
+  const healthStatusByProvider = useMemo(() => {
+    const map = new Map<string, string>();
+    (channelHealth ?? []).forEach((row) => map.set(row.provider_id, row.status));
+    return map;
+  }, [channelHealth]);
+  const healthDotClass = useCallback((providerId: string) => {
+    switch (healthStatusByProvider.get(providerId)) {
+      case 'ok':
+        return 'bg-emerald-400';
+      case 'reachable':
+        return 'bg-amber-400';
+      case 'down':
+        return 'bg-red-400';
+      default:
+        return 'bg-zinc-600';
+    }
+  }, [healthStatusByProvider]);
+  // 供应商 Tab 下方一行渠道情报（模块 E 第4条；provider 定义内 zh/en 直取）。
+  const panelProviderAdvice = useMemo(() => {
+    const advice = getModelProvider(panelProviderId).advice;
+    if (!advice) {
+      return null;
+    }
+    return i18n.language.startsWith('zh') ? advice.zh : advice.en;
+  }, [i18n.language, panelProviderId]);
   const modelIconClassName = isCompactTrigger ? 'h-3 w-3 shrink-0' : 'h-4 w-4 shrink-0';
   const paramsIconClassName = isCompactTrigger ? 'h-2.5 w-2.5 shrink-0' : 'h-4 w-4 shrink-0';
   const modelTextClassName = isCompactTrigger
@@ -400,7 +454,7 @@ export const ModelParamsControls = memo(({
         >
           <NanoBananaIcon className={modelIconClassName} />
           <span className={modelTextClassName}>{selectedModelName}</span>
-          {showProviderName && (
+          {showProviderName && selectedModel.providerId !== AUTO_PROVIDER_ID && (
             <span className={providerTextClassName}>{selectedProviderName}</span>
           )}
         </UiChipButton>
@@ -484,21 +538,37 @@ export const ModelParamsControls = memo(({
                           }`}
                         onClick={(event) => {
                           event.stopPropagation();
-                          let providerApiKey: string;
-                          if (provider.id === '666api') {
-                            providerApiKey = resolve666ApiKey('666api/default', apiKeys) ?? '';
-                          } else if (provider.id === 'juyouapi') {
-                            providerApiKey = (apiKeys['juyouapi'] ?? '').trim();
+                          if (provider.id === AUTO_PROVIDER_ID) {
+                            // 智能出图不要求单一渠道 key，但要求链内至少一个渠道有 key。
+                            if (resolveChainAvailableProviders(apiKeys).length === 0) {
+                              setOpenPanel(null);
+                              setMissingKeyIsAutoChain(true);
+                              setMissingKeyProviderName(provider.label || provider.name);
+                              return;
+                            }
                           } else {
-                            providerApiKey = (apiKeys[provider.id] ?? '').trim();
-                          }
-                          if (!providerApiKey) {
-                            setOpenPanel(null);
-                            setMissingKeyProviderName(provider.label || provider.name);
-                            return;
+                            let providerApiKey: string;
+                            if (provider.id === '666api') {
+                              providerApiKey = resolve666ApiKey('666api/default', apiKeys) ?? '';
+                            } else if (provider.id === 'juyouapi') {
+                              providerApiKey = (apiKeys['juyouapi'] ?? '').trim();
+                            } else {
+                              providerApiKey = (apiKeys[provider.id] ?? '').trim();
+                            }
+                            if (!providerApiKey) {
+                              setOpenPanel(null);
+                              setMissingKeyIsAutoChain(false);
+                              setMissingKeyProviderName(provider.label || provider.name);
+                              return;
+                            }
                           }
                           if (provider.id !== panelProviderId) {
-                            const firstModel = imageModels.find((model) => model.providerId === provider.id);
+                            // 智能出图 tab 默认选中「标准」档（而非按 id 排序命中的 pro）。
+                            const preferredModel = provider.id === AUTO_PROVIDER_ID
+                              ? imageModels.find((model) => model.id === AUTO_STANDARD_IMAGE_MODEL_ID)
+                              : undefined;
+                            const firstModel = preferredModel
+                              ?? imageModels.find((model) => model.providerId === provider.id);
                             if (firstModel) {
                               onModelChange(firstModel.id);
                             }
@@ -506,11 +576,28 @@ export const ModelParamsControls = memo(({
                           setPanelProviderId(provider.id);
                         }}
                       >
+                        <span
+                          className={`h-1.5 w-1.5 shrink-0 rounded-full ${healthDotClass(provider.id)}`}
+                          title={t('settings.channelHealth.lastStatus')}
+                        />
                         {provider.label || provider.name}
+                        {provider.id === AUTO_PROVIDER_ID && (
+                          <span
+                            className="ml-1 text-[10px] leading-none"
+                            title={t('modelParams.autoRecommended')}
+                          >
+                            ⭐
+                          </span>
+                        )}
                       </button>
                     );
                   })}
                 </div>
+                {panelProviderAdvice && (
+                  <p className="mb-2 mt-2 text-[11px] leading-4 text-text-muted/80">
+                    {panelProviderAdvice}
+                  </p>
+                )}
               </section>
 
               <section>
@@ -518,27 +605,35 @@ export const ModelParamsControls = memo(({
                   {t('modelParams.model')}
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {modelGroups.map((group) => {
-                    const active = group.models.some((model) => model.id === selectedModel.id);
-                    const targetModel = group.models.find((model) => model.id === selectedModel.id)
-                      ?? group.models[0];
-                    return (
-                      <button
-                        key={group.name}
-                        className={`inline-flex max-w-full items-center rounded-lg border text-xs leading-4 transition-colors ${modelOptionClassName} ${active
-                          ? 'border-accent/50 bg-accent/15 text-text-dark shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]'
-                          : 'border-[rgba(255,255,255,0.12)] bg-bg-dark/65 text-text-muted hover:border-[rgba(255,255,255,0.2)] hover:bg-[rgba(255,255,255,0.05)]'
-                          }`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onModelChange(targetModel.id);
-                          setOpenPanel(null);
-                        }}
-                      >
-                        <span className="max-w-full break-words text-center">{group.name}</span>
-                      </button>
-                    );
-                  })}
+                {modelGroups.map((group) => {
+                  const active = group.models.some((model) => model.id === selectedModel.id);
+                  const targetModel = group.models.find((model) => model.id === selectedModel.id)
+                    ?? group.models[0];
+                  return (
+                    <button
+                      key={group.name}
+                      className={`inline-flex max-w-full items-center rounded-lg border text-xs leading-4 transition-colors ${modelOptionClassName} ${active
+                        ? 'border-accent/50 bg-accent/15 text-text-dark shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]'
+                        : 'border-[rgba(255,255,255,0.12)] bg-bg-dark/65 text-text-muted hover:border-[rgba(255,255,255,0.2)] hover:bg-[rgba(255,255,255,0.05)]'
+                        }`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onModelChange(targetModel.id);
+                        setOpenPanel(null);
+                      }}
+                    >
+                      {panelProviderId === AUTO_PROVIDER_ID && (
+                        <span
+                          className="mr-1 text-[10px] leading-none"
+                          title={t('modelParams.autoRecommended')}
+                        >
+                          ⭐
+                        </span>
+                      )}
+                      <span className="max-w-full break-words text-center">{group.name}</span>
+                    </button>
+                  );
+                })}
                 </div>
               </section>
             </div>
@@ -818,7 +913,9 @@ export const ModelParamsControls = memo(({
           )}
         >
           <p className="text-sm text-text-muted">
-            {t('modelParams.providerKeyRequiredDesc', { provider: missingKeyProviderName ?? '' })}
+            {missingKeyIsAutoChain
+              ? t('modelParams.autoChainKeyRequiredDesc')
+              : t('modelParams.providerKeyRequiredDesc', { provider: missingKeyProviderName ?? '' })}
           </p>
         </UiModal>,
         document.body
