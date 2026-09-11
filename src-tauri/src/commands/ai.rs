@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection};
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
@@ -17,6 +18,7 @@ use crate::ai::chain::{
 use crate::ai::error::AIError;
 use crate::ai::error_classify::{classify_error_message, ErrorClass};
 use crate::ai::media_store;
+use crate::ai::oss_store::{self, OssConfig, OssUploadError};
 use crate::ai::providers::build_default_providers;
 use crate::ai::providers::api666::Api666Provider;
 use crate::ai::providers::ollama::OllamaProvider;
@@ -91,6 +93,9 @@ pub struct GenerationJobStatusDto {
     /// 链轨迹（逐 hop 失败记录）；单点任务 / 无轨迹时省略。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attempts: Option<Vec<ChainAttempt>>,
+    /// 公司 OSS 归档直链（批次11）：成功且已归档才有。camelCase 与前端 GenerationMeta 对齐。
+    #[serde(rename = "ossUrl", skip_serializing_if = "Option::is_none")]
+    pub oss_url: Option<String>,
 }
 
 /// job 行 request_json 列的落库结构（批次3 meta 台账数据源）。
@@ -102,6 +107,10 @@ struct JobRequestSnapshot {
     model: String,
     size: String,
     aspect_ratio: String,
+    /// 归档目录工程名（批次11）：前端 gateway 从 projectStore 注入 extra_params.oss_project；
+    /// 重启恢复路径的归档从本快照读它。Rust 侧归档时再清洗一次兜底。
+    #[serde(default)]
+    oss_project: Option<String>,
 }
 
 fn job_request_snapshot_json(request: &GenerateRequest) -> Option<String> {
@@ -110,6 +119,12 @@ fn job_request_snapshot_json(request: &GenerateRequest) -> Option<String> {
         model: request.model.clone(),
         size: request.size.clone(),
         aspect_ratio: request.aspect_ratio.clone(),
+        oss_project: request
+            .extra_params
+            .as_ref()
+            .and_then(|params| params.get("oss_project"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
     };
     serde_json::to_string(&snapshot).ok()
 }
@@ -135,6 +150,9 @@ pub struct GenerationHistoryDto {
     pub status: String,
     pub error_class: Option<String>,
     pub created_at: i64,
+    /// 公司 OSS 归档直链（批次11）；未归档省略。camelCase 与前端字段对齐。
+    #[serde(rename = "ossUrl", skip_serializing_if = "Option::is_none")]
+    pub oss_url: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -154,8 +172,10 @@ struct GenerationJobRecord {
     chain_meta_json: Option<String>,
     /// 本次 job 实际请求的完整模型 id（链 job 随 hop 切换更新；成功后即"实际命中渠道"台账）。
     model: Option<String>,
-    /// 原始请求精简快照（prompt/model/size/aspect_ratio，无参考图）。history 台账数据源。
+    /// 原始请求精简快照（prompt/model/size/aspect_ratio/oss_project，无参考图）。history 台账数据源。
     request_json: Option<String>,
+    /// 公司 OSS 归档直链（批次11）：归档成功后由 archive_result_to_oss 写回。
+    oss_url: Option<String>,
 }
 
 fn now_ms() -> i64 {
@@ -195,7 +215,8 @@ fn ensure_generation_jobs_table(conn: &Connection) -> Result<(), String> {
           first_poll_error_at INTEGER,
           chain_meta_json TEXT,
           model TEXT,
-          request_json TEXT
+          request_json TEXT,
+          oss_url TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_ai_generation_jobs_status ON ai_generation_jobs(status);
         CREATE INDEX IF NOT EXISTS idx_ai_generation_jobs_updated_at ON ai_generation_jobs(updated_at DESC);
@@ -251,6 +272,13 @@ fn ensure_generation_jobs_table(conn: &Connection) -> Result<(), String> {
         )
         .map_err(|e| format!("Failed to add request_json column: {}", e))?;
     }
+    if !existing_columns.iter().any(|name| name == "oss_url") {
+        conn.execute(
+            "ALTER TABLE ai_generation_jobs ADD COLUMN oss_url TEXT",
+            [],
+        )
+        .map_err(|e| format!("Failed to add oss_url column: {}", e))?;
+    }
 
     Ok(())
 }
@@ -273,13 +301,32 @@ fn ensure_generation_history_table(conn: &Connection) -> Result<(), String> {
           attempts_json TEXT,
           status TEXT NOT NULL,
           error_class TEXT,
-          created_at INTEGER NOT NULL
+          created_at INTEGER NOT NULL,
+          oss_url TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_ai_generation_history_created_at
           ON ai_generation_history(created_at DESC);
         "#,
     )
     .map_err(|e| format!("Failed to initialize ai_generation_history table: {}", e))?;
+
+    // 老库自愈（批次11）：批次3 建的老 history 表没有 oss_url 列，补齐（可空，无痛升级）。
+    let existing_columns: Vec<String> = {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(ai_generation_history)")
+            .map_err(|e| format!("Failed to inspect ai_generation_history schema: {}", e))?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| format!("Failed to inspect ai_generation_history columns: {}", e))?;
+        rows.filter_map(|name| name.ok()).collect()
+    };
+    if !existing_columns.iter().any(|name| name == "oss_url") {
+        conn.execute(
+            "ALTER TABLE ai_generation_history ADD COLUMN oss_url TEXT",
+            [],
+        )
+        .map_err(|e| format!("Failed to add oss_url column to history: {}", e))?;
+    }
 
     Ok(())
 }
@@ -479,9 +526,9 @@ fn finalize_job(
         r#"
         INSERT OR REPLACE INTO ai_generation_history (
           job_id, provider_id, model, mode, quality, prompt,
-          size, aspect_ratio, duration_ms, attempts_json, status, error_class, created_at
+          size, aspect_ratio, duration_ms, attempts_json, status, error_class, created_at, oss_url
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
         "#,
         params![
             record.job_id,
@@ -496,11 +543,170 @@ fn finalize_job(
             attempts_json,
             status,
             error_class,
-            record.created_at
+            record.created_at,
+            record.oss_url
         ],
     )
     .map_err(|e| format!("Failed to insert generation history: {}", e))?;
     Ok(())
+}
+
+/// 归档成功后写回 job 行 oss_url（批次11）：finalize_job 随后从 job 行
+/// 读它落入 history 台账。失败仅日志，不影响出图终态。
+fn set_job_oss_url(app: &AppHandle, job_id: &str, url: &str) -> Result<(), String> {
+    let conn = open_db(app)?;
+    conn.execute(
+        "UPDATE ai_generation_jobs SET oss_url = ?1 WHERE job_id = ?2",
+        params![url, job_id],
+    )
+    .map_err(|e| format!("Failed to set job oss_url: {}", e))?;
+    Ok(())
+}
+
+// ============================== 公司 OSS 归档（批次11） ==============================
+//
+// 出图成功后自动把结果图上传公司阿里 OSS（全渠道统一一条路，grsai 无快车道），
+// key = `{工程名}/{yyyy-MM}/{job_id}_{provider}_{裸模型名}.{ext}`，拿桶直链永久 URL。
+//
+// 时机：**update_generation_job 标 succeeded 之前**——finalize_job 随后从 job 行
+// 读 oss_url 一并落入 history 台账，成功轮询的 DTO 首包即带 ossUrl，前端无需补拉。
+// 代价是成功可见时间最多让路上传耗时（HEAD 5s + PUT 60s 封顶，典型 <2s），
+// 且任何失败只 warn 一行直接走终态——软失败铁律：归档绝不影响出图。
+
+/// 归档结果到公司 OSS；返回桶直链。未配凭据 / 数据缺失 / 上传失败 → None（内部已日志）。
+async fn archive_result_to_oss(
+    app: &AppHandle,
+    job_id: &str,
+    stored: &str,
+    model: &str,
+) -> Option<String> {
+    let Some(config) = oss_store::current_config() else {
+        tracing::debug!("OSS archive skipped (not configured): job {}", job_id);
+        return None;
+    };
+
+    // 元数据自 job 行：provider_id = 实际命中渠道，created_at = 任务创建时刻（yyyy-MM 用），
+    // request_json.oss_project = 前端注入的工程名（重启恢复路径同样可读）。
+    let record = match get_generation_job(app, job_id) {
+        Ok(Some(record)) => record,
+        _ => {
+            tracing::warn!("OSS archive skipped (job row missing): job {}", job_id);
+            return None;
+        }
+    };
+    let snapshot = parse_request_snapshot(record.request_json.as_deref());
+    let project = snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.oss_project.as_deref())
+        .unwrap_or("");
+
+    // 取图片字节 + 扩展名 + content-type：
+    // - `file:media/` 标记 → 读 media 落盘文件（ext 自文件名）；
+    // - 内联 dataURL（≤64KB）→ base64 解码（ext 自 mime）。
+    let (bytes, ext, content_type) = if let Some(marker) =
+        stored.strip_prefix(media_store::SPOOL_MARKER_PREFIX)
+    {
+        match media_store::load_spooled_bytes(app, marker) {
+            Some((bytes, ext)) => match media_store::ext_to_mime(&ext) {
+                Some(mime) => (bytes, ext, mime.to_string()),
+                None => {
+                    tracing::debug!("OSS archive skipped (non-image spool ext {}): job {}", ext, job_id);
+                    return None;
+                }
+            },
+            None => {
+                tracing::warn!("OSS archive skipped (media file missing): job {}", job_id);
+                return None;
+            }
+        }
+    } else {
+        match media_store::parse_base64_data_url(stored) {
+            Some((mime, bytes)) => match media_store::mime_to_ext(&mime) {
+                Some(ext) => (bytes, ext.to_string(), mime),
+                None => {
+                    tracing::debug!("OSS archive skipped (non-image mime {}): job {}", mime, job_id);
+                    return None;
+                }
+            },
+            None => {
+                tracing::debug!("OSS archive skipped (not an image dataURL): job {}", job_id);
+                return None;
+            }
+        }
+    };
+
+    let key = oss_store::build_object_key(
+        project,
+        record.created_at,
+        job_id,
+        record.provider_id.as_str(),
+        model,
+        ext.as_str(),
+    );
+    match oss_store::upload_image(&config, &key, &bytes, content_type.as_str()).await {
+        Some(url) => {
+            if let Err(error) = set_job_oss_url(app, job_id, &url) {
+                tracing::warn!("OSS archive: failed to persist oss_url for job {}: {}", job_id, error);
+            }
+            Some(url)
+        }
+        None => None,
+    }
+}
+
+#[tauri::command]
+pub async fn set_oss_config(ak: String, sk: String) -> Result<(), String> {
+    info!("Setting OSS archive config (enabled: {})", !ak.trim().is_empty() && !sk.trim().is_empty());
+    oss_store::set_oss_config(&ak, &sk);
+    Ok(())
+}
+
+/// 归档通道连通性测试：生成 1×1 PNG 上传 `未分类/.connectivity-test-{unix_ts}.png`。
+/// 优先用显式传入的密钥（设置页未保存即可测），否则用已注入配置。
+/// 返回人话成功信息 + URL；失败返回人话原因（403=密钥/签名错、超时、网络不可达）。
+#[tauri::command]
+pub async fn test_oss_archive(
+    access_key: Option<String>,
+    secret_key: Option<String>,
+) -> Result<String, String> {
+    const CONNECTIVITY_PNG_B64: &str =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+    let config = match access_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|ak| !ak.is_empty())
+        .zip(secret_key.as_deref().map(str::trim).filter(|sk| !sk.is_empty()))
+    {
+        Some((ak, sk)) => OssConfig {
+            access_key: ak.to_string(),
+            secret_key: sk.to_string(),
+        },
+        None => oss_store::current_config().ok_or_else(|| {
+            "尚未配置 AccessKey / Secret，请先填写".to_string()
+        })?,
+    };
+
+    let unix_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let key = format!("未分类/.connectivity-test-{}.png", unix_ts);
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(CONNECTIVITY_PNG_B64)
+        .map_err(|e| format!("test payload decode failed: {}", e))?;
+
+    match oss_store::upload_image_detail(&config, &key, &bytes, "image/png").await {
+        Ok(url) => Ok(format!("连接成功，归档通道可用：{}", url)),
+        Err(OssUploadError::Http(403)) => Err(
+            "连接失败：签名或密钥错误（HTTP 403），请检查 AccessKey / Secret 是否正确".to_string(),
+        ),
+        Err(OssUploadError::Http(status)) => Err(format!("连接失败：OSS 返回 HTTP {}", status)),
+        Err(OssUploadError::Timeout) => Err("连接失败：请求超时，请检查网络后重试".to_string()),
+        Err(OssUploadError::Network(message)) => {
+            Err(format!("连接失败：网络不可达（{}）", chain::truncate_chars(&message, 160)))
+        }
+    }
 }
 
 /// 终态失败唯一出口（单点任务 / 链任务兜底路径都走这里）：写库 + 台账 + 构造带 error_class 的 DTO。
@@ -524,6 +730,7 @@ fn fail_job(
         provider_id: None,
         model: None,
         attempts: None,
+        oss_url: None,
     })
 }
 
@@ -719,6 +926,8 @@ async fn submit_hop_inner(
             Ok(ProviderTaskSubmission::Succeeded(image_source)) => {
                 // 结果落盘（大图标记化），终态台账收口；DTO 侧还原原文，前端契约不变。
                 let stored = media_store::spool_result(app, job_id, &image_source);
+                // 公司 OSS 归档（批次11）：标 succeeded 之前，失败软跳过绝不阻断。
+                let _ = archive_result_to_oss(app, job_id, &stored, &hop.model).await;
                 let _ = update_generation_job(app, job_id, "succeeded", Some(stored.as_str()), None);
                 // 成功终态：剥掉 chain_meta 里的原始请求快照（防参考图 dataURL 滞留 DB）。
                 if let Err(error) = strip_chain_meta_request_on_success(app, job_id) {
@@ -758,6 +967,7 @@ async fn submit_hop_inner(
         let app_handle = app.clone();
         let spawned_job_id = job_id.to_string();
         let spawned_provider = provider.clone();
+        let spawned_model = hop.model.clone();
         tauri::async_runtime::spawn(async move {
             let result = spawned_provider.generate(request).await;
             let mut keep_active = false;
@@ -765,6 +975,14 @@ async fn submit_hop_inner(
                 Ok(image_source) => {
                     let stored =
                         media_store::spool_result(&app_handle, spawned_job_id.as_str(), &image_source);
+                    // 公司 OSS 归档（批次11）：标 succeeded 之前，失败软跳过绝不阻断。
+                    let _ = archive_result_to_oss(
+                        &app_handle,
+                        spawned_job_id.as_str(),
+                        &stored,
+                        &spawned_model,
+                    )
+                    .await;
                     let update_result = update_generation_job(
                         &app_handle,
                         spawned_job_id.as_str(),
@@ -875,6 +1093,7 @@ async fn fail_or_advance(
                 provider_id: Some(current_record.provider_id.clone()),
                 model: meta.attempts.last().map(|attempt| attempt.model.clone()),
                 attempts: Some(meta.attempts),
+                oss_url: None,
             });
         };
 
@@ -910,6 +1129,7 @@ async fn fail_or_advance(
                     provider_id: None,
                     model: None,
                     attempts: None,
+                    oss_url: None,
                 });
             };
             return Ok(dto_from_record(app, &fresh));
@@ -932,6 +1152,7 @@ async fn fail_or_advance(
                     provider_id: Some(hop.provider_id.clone()),
                     model: Some(hop.model.clone()),
                     attempts: None,
+                    oss_url: None,
                 });
             }
             HopSubmitOutcome::Submitted => {
@@ -952,6 +1173,7 @@ async fn fail_or_advance(
                     provider_id: Some(hop.provider_id.clone()),
                     model: Some(hop.model.clone()),
                     attempts: Some(meta.attempts),
+                    oss_url: None,
                 });
             }
             HopSubmitOutcome::SubmitFailed(fail_message, fail_class) => {
@@ -985,6 +1207,7 @@ async fn fail_or_advance_by_job_id(
             provider_id: None,
             model: None,
             attempts: None,
+            oss_url: None,
         });
     };
     if record.status != "running" {
@@ -1012,7 +1235,8 @@ fn get_generation_job(app: &AppHandle, job_id: &str) -> Result<Option<Generation
             first_poll_error_at,
             chain_meta_json,
             model,
-            request_json
+            request_json,
+            oss_url
             FROM ai_generation_jobs
             WHERE job_id = ?1
             LIMIT 1
@@ -1036,6 +1260,7 @@ fn get_generation_job(app: &AppHandle, job_id: &str) -> Result<Option<Generation
             chain_meta_json: row.get(11)?,
             model: row.get(12)?,
             request_json: row.get(13)?,
+            oss_url: row.get(14)?,
         })
     });
 
@@ -1068,6 +1293,7 @@ fn dto_from_record(app: &AppHandle, record: &GenerationJobRecord) -> GenerationJ
             .as_ref()
             .filter(|meta| !meta.attempts.is_empty())
             .map(|meta| meta.attempts.clone()),
+        oss_url: record.oss_url.clone(),
     };
 
     // 落盘标记还原：DB 里存的是 `file:media/...`，前端拿到的必须是完整
@@ -1887,6 +2113,8 @@ pub async fn submit_generate_image_job(
                     chain_meta_json.as_deref(),
                     request_json.as_deref(),
                 )?;
+                // 公司 OSS 归档（批次11）：job 行已建、finalize 之前，失败软跳过绝不阻断。
+                let _ = archive_result_to_oss(&app, job_id.as_str(), &stored, &effective_model).await;
                 if let Err(error) = finalize_job(&app, job_id.as_str(), "succeeded", None) {
                     info!("Failed to write generation history for {}: {}", job_id, error);
                 }
@@ -1964,11 +2192,20 @@ pub async fn submit_generate_image_job(
     let app_handle = app.clone();
     let spawned_job_id = job_id.clone();
     let spawned_provider = provider.clone();
+    let spawned_model = effective_model.clone();
     tauri::async_runtime::spawn(async move {
         let result = spawned_provider.generate(req).await;
         match result {
             Ok(image_source) => {
                 let stored = media_store::spool_result(&app_handle, spawned_job_id.as_str(), &image_source);
+                // 公司 OSS 归档（批次11）：标 succeeded 之前，失败软跳过绝不阻断。
+                let _ = archive_result_to_oss(
+                    &app_handle,
+                    spawned_job_id.as_str(),
+                    &stored,
+                    &spawned_model,
+                )
+                .await;
                 let update_result = update_generation_job(
                     &app_handle,
                     spawned_job_id.as_str(),
@@ -2037,6 +2274,7 @@ pub async fn get_generate_image_job(
             provider_id: None,
             model: None,
             attempts: None,
+            oss_url: None,
         });
     };
 
@@ -2128,6 +2366,16 @@ pub async fn get_generate_image_job(
         }
         Ok(ProviderTaskPollResult::Succeeded(image_source)) => {
             let stored = media_store::spool_result(&app, record.job_id.as_str(), &image_source);
+            // 公司 OSS 归档（批次11）：标 succeeded 之前，失败软跳过绝不阻断。
+            // 模型取 job 行（= 实际命中渠道的模型；重启恢复路径同样成立）。
+            let archive_model = record.model.clone().unwrap_or_default();
+            let _ = archive_result_to_oss(
+                &app,
+                record.job_id.as_str(),
+                &stored,
+                archive_model.as_str(),
+            )
+            .await;
             update_generation_job(
                 &app,
                 record.job_id.as_str(),
@@ -2157,6 +2405,7 @@ pub async fn get_generate_image_job(
                 provider_id: None,
                 model: None,
                 attempts: None,
+                oss_url: None,
             })
         }
         Ok(ProviderTaskPollResult::Failed(message)) => {
@@ -2189,6 +2438,7 @@ pub async fn get_generate_image_job(
                     provider_id: None,
                     model: None,
                     attempts: None,
+                    oss_url: None,
                 })
             }
         }
@@ -2239,7 +2489,7 @@ pub async fn list_generation_history(
             r#"
             SELECT
               job_id, provider_id, model, mode, quality, prompt,
-              size, aspect_ratio, duration_ms, attempts_json, status, error_class, created_at
+              size, aspect_ratio, duration_ms, attempts_json, status, error_class, created_at, oss_url
             FROM ai_generation_history
             ORDER BY created_at DESC
             LIMIT ?1
@@ -2263,6 +2513,7 @@ pub async fn list_generation_history(
                 status: row.get(10)?,
                 error_class: row.get(11)?,
                 created_at: row.get(12)?,
+                oss_url: row.get(13)?,
             })
         })
         .map_err(|e| format!("Failed to query generation history: {}", e))?;

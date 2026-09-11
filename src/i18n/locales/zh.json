@@ -217,7 +217,8 @@
       "selectToEdit": "选中后在下方输入提示词生成或编辑图片",
       "generationFailed": "生成失败",
       "metaDuration": "{{seconds}} 秒",
-      "metaChainMode": "智能链"
+      "metaChainMode": "智能链",
+      "ossLink": "归档直链：{{url}}"
     },
     "imageEdit": {
       "promptRequired": "请输入提示词",
@@ -430,7 +431,20 @@
       "promptLabel": "提示词",
       "chainTrajectory": "链轨迹：",
       "noTrajectory": "单点直连任务，无链轨迹。",
-      "footerNote": "仅保留最近生成的元数据台账；生成结果图片 7 天后自动清理，不影响本列表。"
+      "footerNote": "仅保留最近生成的元数据台账；生成结果图片 7 天后自动清理，不影响本列表。",
+      "copyLink": "复制链接",
+      "linkCopied": "已复制"
+    },
+    "archive": {
+      "nav": "资产归档",
+      "desc": "出图后自动归档到公司画廊，归档失败不影响出图。",
+      "enabled": "启用自动归档",
+      "enabledDesc": "按工程名分目录归档到公司 OSS；关闭后出图不再上传。",
+      "accessKey": "AccessKey ID",
+      "secretKey": "AccessKey Secret",
+      "testConnection": "测试连接",
+      "testing": "测试中…",
+      "note": "出图成功后自动归档到公司画廊（按 工程名/年月 分目录），结果图可复制桶直链永久分享。归档失败只记一条日志，绝不影响出图。密钥仅保存在本机。"
     },
     "customEndpoints": "NEWAPI 接口",
     "joinChainSwitch": "加入智能出图降级链",

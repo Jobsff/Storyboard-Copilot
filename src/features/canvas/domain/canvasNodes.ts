@@ -85,6 +85,8 @@ export interface GenerationMeta {
   mode?: 'auto' | 'manual';
   /** 链轨迹（单点为空）。 */
   attempts?: GenerationAttemptMeta[];
+  /** 公司 OSS 归档直链（批次11）：成功且已归档才有，角标 title 展示。 */
+  ossUrl?: string | null;
 }
 
 export interface ExportImageNodeData extends NodeImageData {

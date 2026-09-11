@@ -217,7 +217,8 @@
       "selectToEdit": "Select this node and enter a prompt below to generate or edit image",
       "generationFailed": "Generation failed",
       "metaDuration": "{{seconds}}s",
-      "metaChainMode": "Smart chain"
+      "metaChainMode": "Smart chain",
+      "ossLink": "Archive link: {{url}}"
     },
     "imageEdit": {
       "promptRequired": "Please enter a prompt",
@@ -430,7 +431,20 @@
       "promptLabel": "Prompt",
       "chainTrajectory": "Chain trajectory:",
       "noTrajectory": "Single-channel job; no chain trajectory.",
-      "footerNote": "Only recent metadata is kept. Generated result images are cleaned up after 7 days — this list is not affected."
+      "footerNote": "Only recent metadata is kept. Generated result images are cleaned up after 7 days — this list is not affected.",
+      "copyLink": "Copy link",
+      "linkCopied": "Copied"
+    },
+    "archive": {
+      "nav": "Asset Archive",
+      "desc": "Automatically archive generated images to the company gallery. Archive failures never affect generation.",
+      "enabled": "Enable auto archive",
+      "enabledDesc": "Archive to the company OSS in per-project folders; disable to stop uploading.",
+      "accessKey": "AccessKey ID",
+      "secretKey": "AccessKey Secret",
+      "testConnection": "Test connection",
+      "testing": "Testing…",
+      "note": "Successful generations are archived to the company gallery automatically (per project / month folders) and can be shared via permanent bucket links. Archive failures are only logged and never affect generation. Keys stay on this machine."
     },
     "customEndpoints": "NEWAPI Endpoint",
     "joinChainSwitch": "Join smart fallback chain",

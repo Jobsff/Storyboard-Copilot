@@ -8,6 +8,8 @@ import {
   submitGenerateVideoJob,
 } from '@/commands/ai';
 import { imageUrlToDataUrl, persistImageLocally } from '@/features/canvas/application/imageData';
+import { useProjectStore } from '@/stores/projectStore';
+import { OSS_PROJECT_EXTRA_PARAM_KEY, resolveOssProjectParam } from './ossProjectName';
 
 import type {
   AiGateway,
@@ -15,6 +17,24 @@ import type {
   GenerateVideoPayload,
   ReversePromptPayload,
 } from '../application/ports';
+
+/**
+ * 公司 OSS 归档（批次11）：提交入口统一注入当前工程名（extra_params.oss_project），
+ * 归档按工程名分目录。无工程上下文（Toolbox 页）不塞，Rust 兜底「未分类」。
+ */
+function withOssProject(
+  extraParams: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  const projectName = useProjectStore.getState().currentProject?.name;
+  const ossProject = resolveOssProjectParam(projectName);
+  if (!ossProject) {
+    return extraParams ?? {};
+  }
+  return {
+    ...(extraParams ?? {}),
+    [OSS_PROJECT_EXTRA_PARAM_KEY]: ossProject,
+  };
+}
 
 async function normalizeReferenceImages(payload: GenerateImagePayload): Promise<string[] | undefined> {
   const isKieModel = payload.model.startsWith('kie/');
@@ -47,7 +67,7 @@ export const tauriAiGateway: AiGateway = {
       size: payload.size,
       aspect_ratio: payload.aspectRatio,
       reference_images: normalizedReferenceImages,
-      extra_params: payload.extraParams,
+      extra_params: withOssProject(payload.extraParams),
     });
   },
   submitGenerateImageJob: async (payload: GenerateImagePayload) => {
@@ -58,7 +78,7 @@ export const tauriAiGateway: AiGateway = {
       size: payload.size,
       aspect_ratio: payload.aspectRatio,
       reference_images: normalizedReferenceImages,
-      extra_params: payload.extraParams,
+      extra_params: withOssProject(payload.extraParams),
       fallback: payload.fallback
         ? {
           quality: payload.fallback.quality,
@@ -77,11 +97,11 @@ export const tauriAiGateway: AiGateway = {
       size: payload.quality,
       aspect_ratio: payload.aspectRatio,
       reference_images: normalizedReferenceImages,
-      extra_params: {
+      extra_params: withOssProject({
         ...(payload.extraParams ?? {}),
         durationSeconds: payload.durationSeconds,
         quality: payload.quality,
-      },
+      }),
     });
   },
   getGenerateVideoJob,

@@ -308,3 +308,60 @@ Smoke 证据（主对话 2026-09-11 真实 key）：`gemini-3-pro-image-preview`
 - 发版纪律走查：npm run build（check-bundle ✓）→ 无头 Chrome 冒烟（root 挂载 / DOM 9425 / 0 Uncaught）→ `npm run tauri build`（BUILD_EXIT=0）。
 - 产物：`src-tauri/target/release/bundle/dmg/巨游美术工坊_0.3.4_aarch64.dmg`
 - 待真机复测：智能出图 pro 档（重点=第二顺位 aifast/gemini-3-pro-image-preview，smoke 实测 ~23s 出图；grsai-pro 挂掉才轮到它）；顺带 0.3.3 修复项 grsai/gpt-image-2 零参考图 t2i。
+
+## 批次11 · 画板生成图片自动上传公司 OSS（2026-09-11，全渠道统一方案）
+
+### 干了什么
+
+出图成功后（**所有渠道含 grsai 统一一条路，无 grsai oss-id 快车道**）自动把结果图上传公司阿里 OSS，按 `{工程名}/{yyyy-MM}/{job_id}_{provider}_{裸模型名}.{ext}` 归档（工程名中文原样；`/`→`-`、去首尾空白与点号、空兜底「未分类」；yyyy-MM 取 job 行 created_at UTC），拿到桶直链 `https://juyou-meishu.oss-cn-hangzhou.aliyuncs.com/{encoded_key}` 永久 URL。**软失败铁律**：未配凭据/数据缺失/上传失败一律一行日志返回 None，绝不影响出图。
+
+- **Rust 新模块 `ai/oss_store.rs`**：纯 std 手写 SHA-1（RFC 3174 向量）+ HMAC-SHA1（RFC 2202 向量，期望值经 python hmac 复核）+ RFC 7231 IMF-fixdate（无 chrono，civil_from_days 算法，固定 epoch→固定串单测）；OSS V1 签名对齐 image-studio 技能 python 原型 `oss_v1_sign`，**签名交叉验证单测**（哑密钥 dummy-sk/dummy-sk-2，python 离线生成期望 base64 签名写死）；percent-encode 手写（safe='/'，与 python quote 逐字节对齐）。**铁律落地**：请求 URL 用编码 key、签名 resource 用原始未编码 key（形态不一致必 403，smoke 实证）。`upload_image` = HEAD 探测（404 才传；200=已存在直接返回 URL；网络错跳过）→ 签名 PUT（`tokio::time::timeout` 60s）；任何失败 warn 一行。配置态模块级 `RwLock<Option<OssConfig>>`，`set_oss_config` 注入（空=关闭，Rust 不持久化密钥）。
+- **归档接线**：`archive_result_to_oss(app, job_id, stored, model)`（commands/ai.rs）在 **5 处成功终态**接线（submit_hop_inner 两处 / submit_generate_image_job 两处 / get_generate_image_job poll 一处）。元数据自 job 行：provider_id=实际命中渠道、created_at、request_json 快照新增 `oss_project` 字段（前端 gateway 注入，重启恢复路径归档可读）。字节来源：`file:media/` 标记走新增 `media_store::load_spooled_bytes`（读原始字节免 base64 往返，路径穿越防护同 load_from_dir）；内联 dataURL 走 `parse_base64_data_url`（media_store 三函数改 pub(crate)）。成功写回 job 行 `oss_url`（新 `set_job_oss_url`）。
+- **DB**：`ai_generation_jobs` 与 `ai_generation_history` 各加 `oss_url TEXT`（jobs 走既有 PRAGMA 自愈先例；history **新增自愈块**——批次3 建的老表无痛升级）；finalize_job 的 history INSERT 带上 `record.oss_url`；`list_generation_history` 透出。
+- **命令**：`set_oss_config(ak, sk)` + `test_oss_archive(access_key, secret_key)`（可选参——设置页未保存即可测当前输入值；传 1×1 PNG 到 `未分类/.connectivity-test-{unix_ts}.png`，失败人话区分 403/超时/网络不可达）。已注册 lib.rs。
+- **前端**：①gateway 三个提交入口（generate/submit image/submit video）从 `useProjectStore.getState().currentProject?.name` 注入 `extra_params.oss_project`（新纯函数模块 `infrastructure/ossProjectName.ts`，清洗规则与 Rust 逐条对齐，无工程上下文不塞→Rust 兜底未分类；5 个 vitest 用例）；②settingsStore **v21→v22**（`ossArchive: { enabled(默认true), accessKey, secretKey }`，`normalizeOssArchive` 纯函数：enabled 语义=非显式 false 即默认开；3 个迁移用例）；③App.tsx hydrate 后及 ossArchive 变化时 invoke `set_oss_config`（enabled 且密钥齐备才传值否则传空清除；失败 console.warn）；④设置页新增「资产归档」分类（settingsEvents 加 'archive'；新组件 `features/settings/OssArchivePanel.tsx`：AK/SK password 框+显隐、enabled 开关、[测试连接] 显绿/红、说明文案；zh/en i18n 全 key）；⑤复制链接：`GenerationMeta.ossUrl` + Canvas 轮询 meta 带上 + ImageNode 成功角标 title 末尾加「归档直链：URL」行 + 生成记录行内「复制链接」小按钮（仅 ossUrl 非空显示，stopPropagation，navigator.clipboard 参照 GlobalErrorDialog 先例；**行容器从 button 改 div role=button 规避嵌套 button**）；⑥`commands/ai.ts`：GenerationJobStatus/GenerationHistoryEntry 加 `ossUrl`（Rust serde rename ossUrl + skip none）+ setOssConfig/testOssArchive 封装 + ports.ts 轮询状态类型同步。
+
+### 关键判断
+
+1. **归档时机放 succeeded 标记之前**（任务书要求）：finalize_job 从 job 行读 oss_url 落 history 台账，且本轮轮询返回的 DTO 首包即带 ossUrl，前端无需补拉。代价=成功可见最多让路上传耗时（HEAD 5s + PUT 60s 封顶，典型 <2s，对比 20-60s 生成耗时可忽略）。**一处偏离**：submit_generate_image_job 的 resumable 同步成功路径（原 1875 行）job 行在 spool 之后才 insert，归档放 insert（直接写 succeeded）之后、finalize 之前——语义等价（都在 history 台账收口前），该路径本无 update_generation_job 调用。
+2. **job 行 oss_url 与 DTO 透出路径**：archive → `UPDATE ai_generation_jobs SET oss_url`（不碰 status/result，与 update_generation_job 正交）→ finalize_job 从 job 行读 → history INSERT 第 14 列；轮询成功路径 dto_from_record 从重载行带 `ossUrl`（serde rename camelCase + skip none，向后兼容）。
+3. **HTTP-Date 语义**：IMF-fixdate 周几按 UTC 算，2026-09-12 实为周六——任务书示例「Fri, 12 Sep 2026」的 Fri 是笔误（python calendar 复核），单测以 python 权威值为准；签名交叉验证向量不受影响（签名只依赖字符串本身）。
+4. **test_oss_archive 加可选密钥参数**（任务书签名无参）：设置页输入未保存时也能测当前值，且走同一上传路径；无参调用回落 Rust 已注入配置，兼容任务书原语义。
+5. **上传复用全局 reqwest client**（connect 10s/总 300s），HEAD 与 PUT 各包 `tokio::time::timeout`（5s/60s）做硬上限，不吃满客户端 300s。
+6. **工程改名语义**：新图按 job 提交时的 request_json.oss_project 快照进新目录，旧图不搬家（key 一经上传即不变）。此语义长期有效。
+7. tu.jyounet.com 画廊域名不做 oss_url（非浏览器 UA 被 CF 1010 拦），oss_url 一律桶直链。
+
+### 验证
+
+- `cargo check` 0 错；`cargo test` **50 过**（基线 41 + 新增 9：sha1 rfc3174 / hmac rfc2202 / http-date / utc_year_month / 签名 python 交叉验证 / key 编码 / 工程名清洗 / build_key / 配置态）
+- `npm run build` 0 错（check-bundle ✓）；`npm test` **48 过**（基线 40 + v22 迁移 3 + ossProjectName 5）
+- grep 自查：仓库无真实 AK/SK 串（LTAI 开头 20 位；仅哑密钥 dummy-* 测试串）；grsai provider / AIProvider trait / 链逻辑零改动；未 git commit/push
+- 未验证（需真机）：真实凭据下的应用内归档端到端、设置页测试连接按钮（网络部分主对话 smoke 已覆盖：PUT 200 / GET 200 / 中文目录 OK）
+
+### 改了哪些文件
+
+| 文件 | 改动 |
+|---|---|
+| `src-tauri/src/ai/oss_store.rs` | 新增：SHA1/HMAC/HTTP-Date/V1 签名/上传/配置态 + 9 单测 |
+| `src-tauri/src/ai/mod.rs` | 注册 oss_store 模块 |
+| `src-tauri/src/ai/media_store.rs` | mime_to_ext/ext_to_mime/parse_base64_data_url 改 pub(crate)；新增 load_spooled_bytes |
+| `src-tauri/src/commands/ai.rs` | oss_url 列（jobs+history 建表+自愈）、request 快照补 oss_project、archive_result_to_oss + 5 处接线、set_job_oss_url、set_oss_config/test_oss_archive 命令、DTO/查询透出 |
+| `src-tauri/src/lib.rs` | 注册两个新命令 |
+| `src/commands/ai.ts` | GenerationJobStatus/GenerationHistoryEntry 加 ossUrl；setOssConfig/testOssArchive |
+| `src/features/canvas/infrastructure/ossProjectName.ts` | 新增：工程名清洗纯函数 |
+| `src/features/canvas/infrastructure/tauriAiGateway.ts` | 三个提交入口注入 oss_project |
+| `src/features/canvas/application/ports.ts` | 轮询状态类型加 ossUrl（×2） |
+| `src/stores/settingsMigration.ts` | OssArchiveSettings 类型 + normalizeOssArchive + 迁移接线（v22） |
+| `src/stores/settingsStore.ts` | ossArchive state/setter，version 22 |
+| `src/App.tsx` | ossArchive 订阅 → set_oss_config 注入 effect |
+| `src/features/settings/settingsEvents.ts` | SettingsCategory 加 'archive' |
+| `src/features/settings/OssArchivePanel.tsx` | 新增：资产归档面板 |
+| `src/components/SettingsDialog.tsx` | archive nav + 面板挂载 |
+| `src/features/canvas/domain/canvasNodes.ts` | GenerationMeta.ossUrl |
+| `src/features/canvas/Canvas.tsx` | 成功 meta 带 ossUrl |
+| `src/features/canvas/nodes/ImageNode.tsx` | 成功角标 title 加 OSS 直链行 |
+| `src/features/settings/GenerationHistoryPanel.tsx` | 行内复制链接按钮（外层行改 div role=button） |
+| `src/i18n/locales/zh.json` / `en.json` | settings.archive.* 、history.copyLink/linkCopied、node.imageNode.ossLink |
+| `src/stores/__tests__/settingsMigration.test.ts` | v22 迁移 3 用例 |
+| `src/stores/__tests__/ossProjectName.test.ts` | 新增：工程名清洗 5 用例 |
+| `AGENT-BRIEF.md` | 批次进度行补批次11 一句 |

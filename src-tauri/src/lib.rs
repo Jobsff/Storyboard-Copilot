@@ -192,6 +192,8 @@ pub fn run() {
             assets::export_sequence_frames_as_spine,
             assets::export_sequence_frames_as_sprite_pack,
             ai_commands::set_api_key,
+            ai_commands::set_oss_config,
+            ai_commands::test_oss_archive,
             ai_commands::reverse_prompt,
             ai_commands::craft_image_prompt,
             ai_commands::set_juyouapi_base_url,

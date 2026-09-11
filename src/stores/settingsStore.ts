@@ -17,12 +17,14 @@ import {
   normalizeHexColor,
   normalizeImageGenMode,
   normalizeImageQuality,
+  normalizeOssArchive,
   normalizePriceDisplayCurrencyMode,
   normalizeUsdToCnyRate,
   type CanvasEdgeRoutingMode,
   type CustomEndpoint,
   type ImageGenMode,
   type ImageQualityMode,
+  type OssArchiveSettings,
   type ProviderApiKeys,
   type ThemeTonePreset,
   type UiRadiusPreset,
@@ -40,6 +42,7 @@ export type {
   CustomEndpoint,
   ImageGenMode,
   ImageQualityMode,
+  OssArchiveSettings,
   ProviderApiKeys,
   ThemeTonePreset,
   UiRadiusPreset,
@@ -86,6 +89,8 @@ export interface SettingsState {
   autoProbeOnLaunch: boolean;
   /** 后端同步失败项（批次5：juyouapi/ollama/customEndpoint 推送失败收集，仅设置页可见）。 */
   backendSyncErrors: string[];
+  /** 公司 OSS 资产归档（v22）：出图后自动上传，密钥仅存 localStorage（前端唯一真源）。 */
+  ossArchive: OssArchiveSettings;
   setHydrated: (hydrated: boolean) => void;
   setProviderApiKey: (providerId: string, key: string) => void;
   setJuyouapiBaseUrl: (url: string) => void;
@@ -124,6 +129,7 @@ export interface SettingsState {
   setImageQuality: (quality: ImageQualityMode) => void;
   setAutoProbeOnLaunch: (enabled: boolean) => void;
   setBackendSyncErrors: (errors: string[]) => void;
+  setOssArchive: (patch: Partial<OssArchiveSettings>) => void;
 }
 
 /**
@@ -236,6 +242,7 @@ export const useSettingsStore = create<SettingsState>()(
       imageQuality: 'standard',
       autoProbeOnLaunch: true,
       backendSyncErrors: [],
+      ossArchive: { enabled: true, accessKey: '', secretKey: '' },
       setHydrated: (hydrated) => set({ isHydrated: hydrated }),
       setProviderApiKey: (providerId, key) =>
         set((state) => ({
@@ -327,10 +334,14 @@ export const useSettingsStore = create<SettingsState>()(
         set({ imageQuality: normalizeImageQuality(imageQuality) }),
       setAutoProbeOnLaunch: (enabled) => set({ autoProbeOnLaunch: enabled }),
       setBackendSyncErrors: (backendSyncErrors) => set({ backendSyncErrors }),
+      setOssArchive: (patch) =>
+        set((state) => ({
+          ossArchive: normalizeOssArchive({ ...state.ossArchive, ...patch }),
+        })),
     }),
     {
       name: 'settings-storage',
-      version: 21,
+      version: 22,
       onRehydrateStorage: () => {
         return (state, error) => {
           if (error) {

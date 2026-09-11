@@ -63,6 +63,8 @@ export interface GenerationJobStatus {
   model?: string | null;
   /** 链轨迹；单点任务缺省。 */
   attempts?: GenerationAttemptStatus[];
+  /** 公司 OSS 归档直链（批次11）；成功且已归档才有（Rust serde rename ossUrl）。 */
+  ossUrl?: string | null;
 }
 
 const BASE64_PREVIEW_HEAD = 96;
@@ -316,6 +318,8 @@ export interface GenerationHistoryEntry {
   status: string;
   error_class?: string | null;
   created_at: number;
+  /** 公司 OSS 归档直链（批次11）；未归档缺省（Rust serde rename ossUrl）。 */
+  ossUrl?: string | null;
 }
 
 /** 生成历史台账查询（批次5 设置页消费；按 created_at 倒序，默认 100 条）。 */
@@ -534,4 +538,28 @@ export async function registerCustomEndpoint(
 export async function removeCustomEndpoint(id: string): Promise<void> {
   if (!isTauri()) return;
   await invoke('remove_custom_endpoint', { id });
+}
+
+/**
+ * 注入 / 清除公司 OSS 归档凭据（批次11）。空 ak/sk = 关闭归档。
+ * 与 set_api_key 同哲学：Rust 不持久化密钥，前端 localStorage 是唯一真源。
+ */
+export async function setOssConfig(accessKey: string, secretKey: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke('set_oss_config', { ak: accessKey, sk: secretKey });
+}
+
+/**
+ * 归档通道连通性测试（批次11）：上传 1×1 PNG 到 `未分类/.connectivity-test-{ts}.png`。
+ * 可传当前输入框的密钥（未保存即可测）；不传则用 Rust 侧已注入配置。
+ * 成功返回人话信息 + 测试对象 URL；失败 reject 人话原因（403/超时/网络不可达）。
+ */
+export async function testOssArchive(accessKey?: string, secretKey?: string): Promise<string> {
+  if (!isTauri()) {
+    throw new Error('当前不是 Tauri 容器环境，请使用 `npm run tauri dev` 启动');
+  }
+  return await invoke<string>('test_oss_archive', {
+    accessKey: accessKey ?? null,
+    secretKey: secretKey ?? null,
+  });
 }

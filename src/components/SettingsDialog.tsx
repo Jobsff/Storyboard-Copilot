@@ -41,6 +41,7 @@ import providerGuideMarkdown from '../../docs/settings/provider-guide.md?raw';
 import type { SettingsCategory } from '@/features/settings/settingsEvents';
 import { GenerationHistoryPanel } from '@/features/settings/GenerationHistoryPanel';
 import { ChannelHealthPanel } from '@/features/settings/ChannelHealthPanel';
+import { OssArchivePanel } from '@/features/settings/OssArchivePanel';
 
 interface SettingsDialogProps {
   isOpen: boolean;
@@ -797,6 +798,20 @@ export function SettingsDialog({
               `}
               >
                 <span className="text-sm">{t('settings.history.nav')}</span>
+              </button>
+
+              <button
+                onClick={() => setActiveCategory('archive')}
+                className={`
+                w-full flex items-center gap-3 px-4 py-2.5 text-left
+                transition-colors
+                ${activeCategory === 'archive'
+                    ? 'bg-accent/10 text-text-dark border-l-2 border-accent'
+                    : 'text-text-muted hover:bg-bg-dark hover:text-text-dark'
+                  }
+              `}
+              >
+                <span className="text-sm">{t('settings.archive.nav')}</span>
               </button>
 
               <button
@@ -1971,6 +1986,20 @@ export function SettingsDialog({
                   </p>
                 </div>
                 <GenerationHistoryPanel />
+              </>
+            )}
+
+            {activeCategory === 'archive' && (
+              <>
+                <div className="px-6 py-5 border-b border-border-dark">
+                  <h2 className="text-lg font-semibold text-text-dark">
+                    {t('settings.archive.nav')}
+                  </h2>
+                  <p className="text-sm text-text-muted mt-1">
+                    {t('settings.archive.desc')}
+                  </p>
+                </div>
+                <OssArchivePanel />
               </>
             )}
 

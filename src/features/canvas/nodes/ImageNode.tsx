@@ -179,13 +179,21 @@ export const ImageNode = memo(({ id, data, selected, type, width, height }: Imag
     if (generationMeta.mode === 'auto') {
       parts.push(t('node.imageNode.metaChainMode'));
     }
+    // 批次11：title 末尾追加 OSS 归档直链一行（已归档才有），鼠标悬停可复制。
+    const titleLines: string[] = [];
+    if (Array.isArray(generationMeta.attempts) && generationMeta.attempts.length > 0) {
+      titleLines.push(
+        ...generationMeta.attempts.map(
+          (attempt) => `${attempt.providerId}·${attempt.model}（${attempt.errorClass ?? ''}）`
+        )
+      );
+    }
+    if (typeof generationMeta.ossUrl === 'string' && generationMeta.ossUrl) {
+      titleLines.push(t('node.imageNode.ossLink', { url: generationMeta.ossUrl }));
+    }
     return {
       label: parts.join(' · '),
-      title: Array.isArray(generationMeta.attempts) && generationMeta.attempts.length > 0
-        ? generationMeta.attempts
-          .map((attempt) => `${attempt.providerId}·${attempt.model}（${attempt.errorClass ?? ''}）`)
-          .join('\n')
-        : undefined,
+      title: titleLines.length > 0 ? titleLines.join('\n') : undefined,
     };
   }, [generationMeta, isExportResultNode, isGenerating, t]);
 

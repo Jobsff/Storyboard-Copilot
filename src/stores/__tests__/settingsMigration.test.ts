@@ -103,4 +103,30 @@ describe('settingsMigration · v17 → v18', () => {
     expect(migrated.autoProbeOnLaunch).toBe(true);
     expect(migrated.lastUsedImageModel).toBe('agnes/agnes-2.1-flash');
   });
+
+  it('v22：老用户（v21 状态）补齐 ossArchive 默认值（enabled=true，密钥为空）', () => {
+    const migrated = migratePersistedSettings({
+      aifastJoinChain: true,
+      lastUsedImageModel: 'grsai/nano-banana-2',
+    });
+    expect(migrated.ossArchive).toEqual({ enabled: true, accessKey: '', secretKey: '' });
+  });
+
+  it('v22：已持久化的 ossArchive 原样保留（enabled=false 与密钥不被覆盖）', () => {
+    const migrated = migratePersistedSettings({
+      ossArchive: { enabled: false, accessKey: ' LTAIdummy-user-key ', secretKey: 'dummy-sk' },
+    });
+    expect(migrated.ossArchive).toEqual({
+      enabled: false,
+      accessKey: 'LTAIdummy-user-key',
+      secretKey: 'dummy-sk',
+    });
+  });
+
+  it('v22：ossArchive 形状非法时回落默认值（不崩、不透传垃圾）', () => {
+    for (const bad of [null, 'str', 42, [], { enabled: 'yes' }]) {
+      const migrated = migratePersistedSettings({ ossArchive: bad });
+      expect(migrated.ossArchive).toEqual({ enabled: true, accessKey: '', secretKey: '' });
+    }
+  });
 });

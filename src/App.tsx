@@ -54,6 +54,7 @@ function App() {
   const isHydrated = useProjectStore((state) => state.isHydrated);
   const hydrate = useProjectStore((state) => state.hydrate);
   const settingsHydrated = useSettingsStore((state) => state.isHydrated);
+  const ossArchive = useSettingsStore((state) => state.ossArchive);
   const currentProjectId = useProjectStore((state) => state.currentProjectId);
   const currentPage = useProjectStore((state) => state.currentPage);
   const setCurrentPage = useProjectStore((state) => state.setCurrentPage);
@@ -121,6 +122,25 @@ function App() {
       }
     })();
   }, [settingsHydrated]);
+
+  useEffect(() => {
+    // 公司 OSS 归档凭据注入（批次11）：hydrate 后及 ossArchive 变化时同步到 Rust。
+    // enabled 且密钥齐备才传值，否则传空清除归档；失败 console.warn 不打扰（软失败铁律）。
+    if (!settingsHydrated) {
+      return;
+    }
+    void (async () => {
+      try {
+        const { setOssConfig } = await import('@/commands/ai');
+        const { accessKey, secretKey, enabled } = useSettingsStore.getState().ossArchive;
+        const ak = enabled ? accessKey.trim() : '';
+        const sk = enabled ? secretKey.trim() : '';
+        await setOssConfig(ak && sk ? ak : '', sk);
+      } catch (error) {
+        console.warn('[App] set_oss_config sync failed', error);
+      }
+    })();
+  }, [settingsHydrated, ossArchive]);
 
   useEffect(() => {
     const unsubscribe = subscribeOpenGlobalErrorDialog((detail) => {

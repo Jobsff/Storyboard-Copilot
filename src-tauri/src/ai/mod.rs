@@ -3,6 +3,7 @@ pub mod error;
 pub mod error_classify;
 pub mod http;
 pub mod media_store;
+pub mod oss_store;
 pub mod providers;
 
 use std::collections::{HashMap, HashSet};

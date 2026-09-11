@@ -21,6 +21,29 @@ export type ImageGenMode = 'auto' | 'expert';
 /** 智能出图质量档位（与 Rust chain.rs 的 quality 对齐）。 */
 export type ImageQualityMode = 'standard' | 'pro';
 
+/** 公司 OSS 资产归档配置（v22）：密钥存 localStorage（前端是唯一真源），运行时注入 Rust。 */
+export interface OssArchiveSettings {
+  /** 关闭后出图不再归档（默认开启）。 */
+  enabled: boolean;
+  accessKey: string;
+  secretKey: string;
+}
+
+/** v22：ossArchive 归一化——形状非法 / 字段缺失一律回落默认；
+ * enabled 语义 = 非**显式 false** 一律默认开（尊重老用户显式关闭）。 */
+export function normalizeOssArchive(input: unknown): OssArchiveSettings {
+  const defaults: OssArchiveSettings = { enabled: true, accessKey: '', secretKey: '' };
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return defaults;
+  }
+  const raw = input as { enabled?: unknown; accessKey?: unknown; secretKey?: unknown };
+  return {
+    enabled: raw.enabled !== false,
+    accessKey: typeof raw.accessKey === 'string' ? raw.accessKey.trim() : '',
+    secretKey: typeof raw.secretKey === 'string' ? raw.secretKey.trim() : '',
+  };
+}
+
 export const DEFAULT_GRSAI_NANO_BANANA_PRO_MODEL = 'nano-banana-pro';
 
 /** 与 Rust ai_generation_history 的 mode 字段语义对齐（manual/auto）。 */
@@ -180,11 +203,11 @@ export function normalizeCustomEndpoints(input: unknown): CustomEndpoint[] {
 }
 
 /**
- * settings-storage 的 migrate 纯函数（当前 version 21）。
+ * settings-storage 的 migrate 纯函数（当前 version 22）。
  * 语义：老用户已有字段原样保留（含 lastUsedImageModel——不强制迁移到智能出图），
  * 仅对缺失/非法字段补默认值。
  * v20 曾引入 aifastModels（运行时勾选），v21 改静态清单后**读取即丢弃**；
- * aifastJoinChain 保留。
+ * aifastJoinChain 保留。v22 新增 ossArchive（公司 OSS 资产归档）。
  */
 export function migratePersistedSettings(persistedState: unknown): Record<string, unknown> {
   const state = (persistedState ?? {}) as {
@@ -209,6 +232,7 @@ export function migratePersistedSettings(persistedState: unknown): Record<string
     imageQuality?: ImageQualityMode | string;
     autoProbeOnLaunch?: boolean;
     aifastJoinChain?: boolean;
+    ossArchive?: unknown;
   };
 
   const migratedApiKeys = normalizeApiKeys(state.apiKeys);
@@ -238,15 +262,17 @@ export function migratePersistedSettings(persistedState: unknown): Record<string
   const ignoreAtTagWhenCopyingAndGenerating =
     state.ignoreAtTagWhenCopyingAndGenerating ?? true;
 
-  // v18/v19/v20/v21 新增字段：缺失或非法时补默认值，不覆盖老用户显式配置。
+  // v18/v19/v20/v21/v22 新增字段：缺失或非法时补默认值，不覆盖老用户显式配置。
   // backendSyncErrors 是运行时字段，rehydrate 时强制清空（陈旧失败项不可信）。
   // v21：aifastModels 改静态清单，迁移时读取即丢弃（不在输出中保留）。
+  // v22：ossArchive（公司 OSS 资产归档），enabled 默认开。
   const migratedDefaults = {
     imageGenMode: normalizeImageGenMode(state.imageGenMode),
     imageQuality: normalizeImageQuality(state.imageQuality),
     autoProbeOnLaunch: state.autoProbeOnLaunch ?? true,
     backendSyncErrors: [] as string[],
     aifastJoinChain: state.aifastJoinChain === true,
+    ossArchive: normalizeOssArchive(state.ossArchive),
   };
 
   /** 已退役字段的剥离表：spread 输入前剔除，防止旧键回流进新 state。 */

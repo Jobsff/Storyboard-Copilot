@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronRight, Link2, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -107,6 +107,18 @@ export function GenerationHistoryPanel() {
 
   const footerNote = useMemo(() => t('settings.history.footerNote'), [t]);
 
+  // 复制 OSS 归档直链（批次11）：navigator.clipboard 先例见 GlobalErrorDialog。
+  const [copiedJobId, setCopiedJobId] = useState<string | null>(null);
+  const handleCopyLink = useCallback(async (jobId: string, url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedJobId(jobId);
+      window.setTimeout(() => setCopiedJobId((current) => (current === jobId ? null : current)), 1200);
+    } catch (error) {
+      console.error('Failed to copy OSS link', error);
+    }
+  }, []);
+
   return (
     <div className="flex-1 overflow-y-auto px-6 py-4">
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -146,13 +158,22 @@ export function GenerationHistoryPanel() {
               key={entry.job_id}
               className={`rounded-lg border bg-bg-dark ${isFailed ? 'border-red-500/30' : 'border-border-dark'}`}
             >
-              <button
-                type="button"
+              {/* 行容器用 div role=button：行内还有「复制链接」真按钮，避免 button 嵌套 button。 */}
+              <div
+                role="button"
+                tabIndex={isFailed ? 0 : -1}
                 className={`flex w-full items-center gap-3 px-3 py-2 text-left text-xs ${isFailed ? 'cursor-pointer' : 'cursor-default'}`}
                 onClick={() => {
                   if (!isFailed) {
                     return;
                   }
+                  setExpandedJobId(expanded ? null : entry.job_id);
+                }}
+                onKeyDown={(event) => {
+                  if (!isFailed || !(event.key === 'Enter' || event.key === ' ')) {
+                    return;
+                  }
+                  event.preventDefault();
                   setExpandedJobId(expanded ? null : entry.job_id);
                 }}
               >
@@ -182,10 +203,28 @@ export function GenerationHistoryPanel() {
                 >
                   {isFailed ? t('settings.history.statusFailed') : t('settings.history.statusSucceeded')}
                 </span>
-                <span className="w-[72px] shrink-0 truncate text-text-muted">
-                  {isFailed ? errorClassLabel(entry.error_class) : ''}
+                <span className="flex w-[72px] shrink-0 items-center justify-end gap-1 truncate text-text-muted">
+                  <span className="truncate">
+                    {isFailed ? errorClassLabel(entry.error_class) : ''}
+                  </span>
+                  {entry.ossUrl && (
+                    <button
+                      type="button"
+                      className="inline-flex h-6 shrink-0 items-center gap-1 rounded border border-border-dark bg-surface-dark px-1.5 text-[11px] text-text-muted transition-colors hover:bg-bg-dark hover:text-text-dark"
+                      title={t('settings.history.copyLink')}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleCopyLink(entry.job_id, entry.ossUrl as string);
+                      }}
+                    >
+                      <Link2 className="h-3 w-3" />
+                      {copiedJobId === entry.job_id
+                        ? t('settings.history.linkCopied')
+                        : t('settings.history.copyLink')}
+                    </button>
+                  )}
                 </span>
-              </button>
+              </div>
 
               {isFailed && expanded && (
                 <div className="space-y-2 border-t border-border-dark px-3 py-2 text-xs text-text-muted">

@@ -582,6 +582,7 @@ export function Canvas() {
                 durationMs: metaStartedAt !== null ? Math.max(0, Date.now() - metaStartedAt) : null,
                 mode: (metaRequestModel.startsWith('auto/') ? 'auto' : 'manual') as 'auto' | 'manual',
                 attempts: status.attempts,
+                ossUrl: status.ossUrl ?? null,
               };
 
               updateNodeData(pendingNode.id, {

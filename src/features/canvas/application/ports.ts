@@ -84,6 +84,8 @@ export interface AiGateway {
       error_class?: string | null;
       error?: string | null;
     }>;
+    /** 公司 OSS 归档直链（批次11）；成功且已归档才有。 */
+    ossUrl?: string | null;
   }>;
   submitGenerateVideoJob: (payload: GenerateVideoPayload) => Promise<string>;
   getGenerateVideoJob: (jobId: string) => Promise<{
@@ -100,6 +102,8 @@ export interface AiGateway {
       error_class?: string | null;
       error?: string | null;
     }>;
+    /** 公司 OSS 归档直链（批次11）；成功且已归档才有。 */
+    ossUrl?: string | null;
   }>;
   reversePrompt: (provider: string, payload: ReversePromptPayload) => Promise<string>;
 }

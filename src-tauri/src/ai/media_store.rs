@@ -32,7 +32,8 @@ const CLEANUP_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 // mime ↔ ext
 // ──────────────────────────────────────────────────────────────────────
 
-fn mime_to_ext(mime: &str) -> Option<&'static str> {
+/// mime → 扩展名（批次11 OSS 归档也消费，crate 内可见）。
+pub(crate) fn mime_to_ext(mime: &str) -> Option<&'static str> {
     match mime {
         "image/png" => Some("png"),
         "image/jpg" => Some("jpg"),
@@ -43,7 +44,7 @@ fn mime_to_ext(mime: &str) -> Option<&'static str> {
     }
 }
 
-fn ext_to_mime(ext: &str) -> Option<&'static str> {
+pub(crate) fn ext_to_mime(ext: &str) -> Option<&'static str> {
     match ext {
         "png" => Some("image/png"),
         "jpg" => Some("image/jpeg"),
@@ -55,7 +56,7 @@ fn ext_to_mime(ext: &str) -> Option<&'static str> {
 }
 
 /// 解析 base64 型 data URL，返回 (mime, 解码后字节)。
-fn parse_base64_data_url(source: &str) -> Option<(String, Vec<u8>)> {
+pub(crate) fn parse_base64_data_url(source: &str) -> Option<(String, Vec<u8>)> {
     let rest = source.strip_prefix("data:")?;
     let (meta, payload) = rest.split_once(",")?;
     let mime = meta.strip_suffix(";base64")?.trim().to_lowercase();
@@ -174,6 +175,25 @@ pub fn spool_result(app: &tauri::AppHandle, job_id: &str, source: &str) -> Strin
 pub fn load_spooled(app: &tauri::AppHandle, marker: &str) -> Option<String> {
     let dir = media_dir(app).ok()?;
     load_from_dir(&dir, marker)
+}
+
+/// 读落盘**原始字节 + 扩展名**（批次11 OSS 归档数据源；避免 load_spooled 的
+/// base64 重编码往返）。路径校验同 `load_from_dir`，找不到返回 None。
+pub fn load_spooled_bytes(app: &tauri::AppHandle, marker: &str) -> Option<(Vec<u8>, String)> {
+    let dir = media_dir(app).ok()?;
+    let rel = marker.strip_prefix(SPOOL_MARKER_PREFIX)?;
+    // 路径穿越防护：只接受单段文件名（我们写入的形如 {uuid}.{ext}）。
+    if rel.is_empty()
+        || rel.contains('/')
+        || rel.contains('\\')
+        || rel.contains("..")
+        || Path::new(rel).file_name().map(|name| name != rel).unwrap_or(true)
+    {
+        return None;
+    }
+    let ext = rel.rsplit('.').next()?.to_string();
+    let bytes = std::fs::read(dir.join(rel)).ok()?;
+    Some((bytes, ext))
 }
 
 /// 启动清理：删除 media 目录中超过 7 天的文件。失败仅日志，不阻断启动。

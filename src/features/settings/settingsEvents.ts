@@ -6,6 +6,7 @@ export type SettingsCategory =
   | 'general'
   | 'history'
   | 'health'
+  | 'archive'
   | 'experimental'
   | 'about';
 
