@@ -365,3 +365,437 @@ Smoke 证据（主对话 2026-09-11 真实 key）：`gemini-3-pro-image-preview`
 | `src/stores/__tests__/settingsMigration.test.ts` | v22 迁移 3 用例 |
 | `src/stores/__tests__/ossProjectName.test.ts` | 新增：工程名清洗 5 用例 |
 | `AGENT-BRIEF.md` | 批次进度行补批次11 一句 |
+
+## 发版 · v0.3.5（2026-09-11，主对话本地打包 + CI）
+
+- 内容 = 0.3.4 + 批次11（公司资产自动归档 OSS：全渠道统一、按工程名分目录、桶直链分享）。
+- 链路事实（主对话真实凭据 smoke 实证，勿重复调查）：V1 签名 PUT/公共读 GET/DELETE 全通；中文目录 key 正常；**tu.jyounet.com 是 Cloudflare 后的画廊应用**（/api/list?prefix= 按前缀列桶，图片 URL 即桶直链，非浏览器 UA 被 CF 1010 拦）→ 分享链接用桶直链 `https://juyou-meishu.oss-cn-hangzhou.aliyuncs.com/{key}`，不用画廊域名。
+- 发版纪律走查：check-bundle ✓ / 无头冒烟 root 挂载 DOM 9425、0 Uncaught ✓ / BUILD_EXIT=0 ✓。
+- 产物：`src-tauri/target/release/bundle/dmg/巨游美术工坊_0.3.5_aarch64.dmg`；Windows 走 tag v0.3.5 CI（commit 0aeefbf）。
+- 真机走查清单（用户）：设置→资产归档填 AK/SK→测试连接显绿；出图成功角标悬停见归档直链；生成记录「复制链接」可用；关开关/断网出图不受影响；归档目录=工程名/年-月/。
+
+## 事故记录 · grsai 裸 URL 源不归档（2026-09-12 热修）
+
+### 现象与根因链
+
+用户真机 0.3.5：出图成功但零归档。DB 实证：成功 job（grsai/nano-banana-pro）的 `ai_generation_jobs.result` 是**裸 http URL**（`https://file2.aitohumanize.com/file/...`，72 字节）。根因链 = 三环叠加：
+
+1. `media_store::encode_spool` 既有语义：只物化 dataURL（解码落盘），≤64KB 源原样入库，**http URL 永不下载**（media_store.rs 测试锁定，语义未动）→ 裸 URL 原文进 result 列；
+2. grsai 全系渠道都返回 URL 结果 → 智能链头 grsai 活着就命中它（与工程名注入无关，前端 oss_project 注入正常，DB 快照含 "oss_project"）；
+3. 批次11 `archive_result_to_oss` 只认 `file:media/` 标记与 dataURL 两形态 → 裸 URL 走 `parse_base64_data_url` 失败 → debug 静默跳过。
+
+### 修法（最小改动，两处）
+
+1. **`archive_result_to_oss` 加第三种源形态 http(s) URL**（commands/ai.rs）：以 `http://`/`https://` 开头 → `ai::http` 全局 client GET 下载（单请求 `.timeout(30s)`）；非 2xx/下载失败 `tracing::warn!` 一行返回 None（软失败铁律不动）。字节魔数嗅探定 ext/mime：`oss_store::sniff_image(bytes)` 纯函数——PNG `\x89PNG\r\n\x1a\n`→("png","image/png")、JPEG `\xFF\xD8\xFF`→("jpg","image/jpeg")、WebP `RIFF`+偏移8 `WEBP`→("webp","image/webp")，嗅探不出 debug 跳过；后续 build_object_key + upload_image 路径不变。
+2. **App.tsx OSS 注入归一 `effective` 形态**：`effective = enabled && ak !== '' && sk !== ''`，`setOssConfig(effective ? ak : '', effective ? sk : '')`——开关关闭即清空 Rust 侧配置。**注**：改动前代码已在用 enabled 且行为等价（旧写法 `setOssConfig(ak && sk ? ak : '', sk)` 依赖 Rust 侧任一为空即清除兜底），本次为按任务书归一为显式 effective 形态，运行行为无变化。
+
+### 验证
+
+- `cargo check` 0 错；`cargo test` **51 过**（批次11 基线 50 + 新增 `sniff_image_magic_bytes` 1 组：PNG/JPEG/WebP 真实魔数 + 纯文本/空/截断 RIFF → None）
+- `npx tsc --noEmit` 0 错；`npm test` **48 过**（App.tsx 改动无测试面，数量不变）
+- grep 自查：`media_store.rs` 零改动（`encode_spool("https://example.com/short.png").is_none()` 锁定测试原样在位）；真实密钥零出现（仅 OssArchivePanel placeholder "LTAI..." 文本）；未 git commit/push
+- 未验证（需真机）：grsai 真实出图 → URL 下载 → OSS 归档端到端
+
+### 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `src-tauri/src/ai/oss_store.rs` | 新增 `sniff_image` 纯函数 + 1 单测（四组向量） |
+| `src-tauri/src/commands/ai.rs` | `archive_result_to_oss` 加 http(s) URL 分支 + 新增 `download_result_image`（30s 超时软失败） |
+| `src/App.tsx` | OSS 注入 effect 归一 effective 形态（行为等价） |
+
+## 批次11 补丁2 · 目录扁平化 + 图片工具栏手动补传（2026-09-12）
+
+### 干了什么
+
+0.3.6 真机复测：**归档链路已工作**（job 2471c622 oss_url 已写、桶内对象公网 GET 200），用户误判没传上的根因 = 画廊两层目录（工程→年-月→图）只点开一层。用户拍板两层整改：
+
+1. **key 扁平化**：`build_object_key` 去掉 `{yyyy-MM}` 层 → `{工程名}/{唯一段}_{provider}_{裸模型名}.{ext}`（`created_at` 参数移除；工程名清洗/未分类兜底不变）。自动归档唯一段=job_id，手动补传=毫秒时间戳。`utc_year_month` 纯函数保留备用（注释已注明）。**存量旧层级对象不迁移**：桶里已有的少数 `{工程}/{年-月}/` 老对象原样留存，仅新对象走扁平 key。
+2. **手动补传命令 `archive_image_manual(source, oss_project?, provider_id?, model?) -> Result<String, String>`**（commands/ai.rs，已注册 lib.rs）：源形态四种与自动归档共用抽出的 `resolve_archive_image_source`（`file:media/` 标记 / http(s) URL / **本地绝对路径 = std::fs::read + sniff_image** / dataURL）；无 job_id，key=`{project}/{unix_ms}_{provider 或 manual}_{model 裸名或 image}.{ext}`；未配凭据 → Err「请先在设置 → 资产归档 填写公司密钥」；上传失败走 `upload_image_detail` 保留上游状态码（403/超时/网络不可达人话）。软失败铁律只约束自动归档——手动命令是用户显式动作，失败必须如实报错。
+3. **图片工具栏「上传归档」按钮**（NodeActionToolbar，`isExportImageNode && node.data.imageUrl` 才出，CloudUpload 图标）：无 `generationMeta.ossUrl` → 解析节点真实源调手动归档，成功 updateNodeData 写回 ossUrl + 直链自动进剪贴板 + 按钮短暂绿色态（复用 isCopySuccess 先例）；已有 ossUrl → 同按钮复用为「复制归档链接」；loading 态防连点（RefreshCw 自旋）；失败走 `showErrorDialog` 全局错误弹窗（与现有错误展示一致）；oss_project 从 `useProjectStore currentProject?.name` 经 `resolveOssProjectParam` 清洗注入（同 gateway 口径），provider/model 取 generationMeta（缺省 manual/image，Rust 侧兜底）；i18n zh/en 各 7 个新 key（nodeToolbar.uploadArchive*）。
+   - **补丁2 追加（用户复测后缺口）**：按钮 gate 扩为 **exportImage 或 upload** 且有图——自己上传的图（uploadNode）也要能补传归档；源=本地绝对路径，Rust 本地路径分支已覆盖，Rust 零改动。ossUrl 存储按节点类型分字段：exportImage 沿用 `generationMeta.ossUrl`，upload 新增可选字段 `UploadImageNodeData.ossArchiveUrl`（不给上传节点挂整个 GenerationMeta——provider/model/耗时/链轨迹对上传图全是无意义语义；可选字段随 nodes_json 整体序列化+imagePool 编码，无迁移）；provider/model 上传节点不传（Rust 缺省 manual/image 已就位），工程名注入口径不变。
+
+### 关键判断
+
+1. **节点图池化源调查结论**：`__img_ref__:N` 编码**只存在于持久化 JSON**（projectStore `encodeImageReference`/`decodeImageReference` 仅在存取 DB 时成对生效，`Project` 类型上没有 imagePool 字段，`PersistedProject` 才有）——内存节点 `data.imageUrl` 就是真实源，且 Tauri 模式下上传与生成结果都经 `prepareNodeImage` 落盘为**本地绝对路径**（imageData.ts `prepareNodeImageSource` 返回 imagePath），故手动归档的主流源形态=本地路径，Rust 侧 `std::fs::read + sniff_image` 正面覆盖。前端不做池化反查（类型上也不成立）；万一出现 `__img_ref__`，Rust 返回「图片源不可读」人话错误，可接受软失败。
+2. 源形态分派顺序（`resolve_archive_image_source`）：spool 前缀 → http(s) → 本地路径（Unix `/`、UNC `\\`、盘符 `X:\`）→ dataURL，互斥无歧义。
+3. 本地路径只认魔数（png/jpg/webp），不信任扩展名——与热修 http 分支同口径；gif 等其他格式走 spool/dataURL 分支仍支持（自动归档不受影响）。
+4. 手动 key 唯一段用毫秒时间戳：同图重复点击会生成新对象（时间戳不同），不做去重——补传语义就是「传一份能分享的直链」，已有 ossUrl 的节点按钮已转为复制链接，不会重复触发。
+
+### 验证
+
+- `cargo check` 0 错；`cargo test` **51 过 0 挂**（`build_object_key_layout` 单测更新为扁平向量 + 手动形态向量；`utc_year_month` 测试保留）
+- `npx tsc --noEmit` 0 错；`npm test` **48 过**；`npm run build` 0 错（check-bundle ✓）
+- grep 自查：真实密钥零出现；media_store spool 语义零改动；未 git commit/push
+- 未验证（需真机）：手动补传端到端（本地路径图 → 按钮 → 桶直链复制）；旧工程 2471c622 对象不受影响
+
+### 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `src-tauri/src/ai/oss_store.rs` | `build_object_key` 扁平化（去 created_at/yyyy-MM）+ 单测更新 + 模块头注释 |
+| `src-tauri/src/commands/ai.rs` | 抽 `resolve_archive_image_source` 四形态共享函数 + `is_local_filesystem_path`；`archive_result_to_oss` 改走共享函数；新增 `archive_image_manual` 命令 |
+| `src-tauri/src/lib.rs` | 注册 archive_image_manual |
+| `src/commands/ai.ts` | archiveImageManual 封装 |
+| `src/features/canvas/ui/NodeActionToolbar.tsx` | 上传归档按钮（CloudUpload）+ handleArchiveImage（补传/复制链接双态 + loading 防连点 + 全局错误弹窗）；追加：gate 扩 uploadNode，写回按节点类型分字段 |
+| `src/features/canvas/domain/canvasNodes.ts` | 追加：UploadImageNodeData.ossArchiveUrl 可选字段（上传节点归档直链写回位） |
+
+## 批次12 · 画廊集成与归档伴档（画板侧，2026-09-12）
+
+> 画廊 Worker 侧（tu.jyounet.com 读 .meta.json 渲染卡片简介）由主对话同期实现，不在本小节。
+
+### 干了什么
+
+1. **应用内嵌巨游资产画廊页**：projectStore `currentPage` 路由扩 `'gallery'`（'toolbox' 先例）；App.tsx 三元路由变四分支，**进入画廊不清空 currentProjectId**——从工程进画廊、返回画布回原工程，从首页也能进。TitleBar 标题旁两个小按钮：「画廊」（Images 图标，随时可见，画廊页高亮）与「画布」（LayoutGrid，仅画廊页显示，高亮，点击 `setCurrentPage('projects')` 回画布/项目首页）；TitleBar 返回键同样覆盖画廊页（回 projects，不 closeProject）。新组件 `features/gallery/GalleryPage.tsx`：全屏页 = 窄工具栏（返回 + 标题「巨游资产画廊」+ 在浏览器中打开，openUrl 走既有 `@tauri-apps/plugin-opener`，opener:default 权限已有先例）+ `<iframe src="https://tu.jyounet.com/">`，onLoad 前 Loader2 spinner 遮罩。**tauri.conf.json csp 调查结论：`"csp": null`，无需补 frame-src，零改动。** i18n `gallery.*` 5 key（zh/en）。
+2. **归档写 `.meta.json` 伴档**（画廊卡片简介数据源）：`oss_store` 新增 `ArchiveSidecarMeta`（serde camelCase，`skip_serializing_if` ——字段缺失一律省略绝不写 null：provider/model/aspectRatio/size/prompt/jobId/archivedAt 毫秒）+ `meta_sidecar_key`（=图 key + `.meta.json`）+ `upload_meta_sidecar`（复用 `upload_image_detail` 签名 PUT，content-type application/json，「URL 编码/签名原始」铁律天然继承；**伴档软失败**——失败 warn 一行返回 None，oss_url 照常返回，画廊少个简介而已）。接线两条归档成功路径：自动归档 meta 取 job 行 request_json 快照（prompt/model/size/aspect_ratio）+ provider_id + job_id，空串字段经 `non_empty_str` 省略；手动补传 provider/model 沿用 key 缺省（manual/image），prompt 等 None 全省略。新增单测 2 个：serde skip 形状断言（无 prompt 时输出无该 key 且全文无 null）、伴档 key 构造。
+
+### 验证
+
+- `cargo check` 0 错；`cargo test` **53 过 0 挂**（批次11 基线 51 + 伴档 2）
+- `npx tsc --noEmit` 0 错；`npm test` **48 过**；`npm run build` 0 错（check-bundle ✓）
+- grep 自查：真实密钥零出现；未 git commit/push
+- 未验证（需真机）：iframe 内嵌加载画廊（tu.jyounet.com 非浏览器 UA 被 CF 拦的问题是服务端 Worker 侧解决，主对话同期处理；应用 WebView UA 是否放行待真机确认）；伴档 JSON 在画廊卡片实际渲染效果
+
+### 改动文件（画板侧）
+
+| 文件 | 改动 |
+|---|---|
+| `src-tauri/src/ai/oss_store.rs` | ArchiveSidecarMeta（serde skip）/meta_sidecar_key/upload_meta_sidecar + 2 单测 |
+| `src-tauri/src/commands/ai.rs` | 自动归档与手动补传成功路径接伴档上传；non_empty_str 辅助 |
+| `src/stores/projectStore.ts` | currentPage 路由扩 'gallery' |
+| `src/App.tsx` | 四分支路由 + TitleBar 返回键覆盖画廊页 + GalleryPage 挂载 |
+| `src/components/TitleBar.tsx` | 画廊/画布切换小按钮（Images/LayoutGrid） |
+| `src/features/gallery/GalleryPage.tsx` | 新增：内嵌画廊页（工具栏 + iframe + spinner 遮罩 + 浏览器打开） |
+| `src/i18n/locales/zh.json` / `en.json` | gallery.* 5 key |
+| `src/i18n/locales/zh.json` / `en.json` | nodeToolbar.uploadArchive* 7 key |
+
+## 批次12 补充 · 画廊 Worker 侧（主对话改，2026-09-13）
+
+源码正本 ~/.agents/skills/oss-gallery/worker.js（线上=CF Worker juyou-gallery，账号 dbf129aab5007e9400c5f97db35fb3fe）：
+1. **首页递归瀑布流**：/api/list?recursive=1（无 delimiter，10 页×1000 封顶，时间倒序，一级目录自推）；首页「全部」页签走递归=所有目录新图直接上首页；卡片左上角目录角标（可点击进目录）；分层模式不动。
+2. **/api/meta 伴档接口**：?keys=k1,k2（≤50/批）签名 GET {key}.meta.json → {metas:{key:json|null}}；卡片简介（模型/规格 chip + 提示词一行预览）+ 灯箱完整提示词（可复制）；.meta.json 伴档从瀑布流过滤（marker 取原始 page 翻页不受影响）。
+3. 本地校验：node --check ✓ / sign_test ✓ / mock 页面含 minfo/lprompt/api/meta 13 处 ✓。
+4. **部署阻塞**：CF MCP token 只读（PUT 报 10000）。部署脚本 /Users/jobsff/code/xyflow/deploy-gallery.mjs 已就绪——用户放有 Workers 写权限的 API Token 到 ~/.zcode/.cf-token 后 `node /Users/jobsff/code/xyflow/deploy-gallery.mjs`（自动验证 health + 递归列举）。wrangler 登的是另一账号（9bd082…）不可用。
+5. app 侧伴档字段：provider/model/aspectRatio/size/prompt/jobId/archivedAt（serde skip 缺失，无 null）。
+
+## 画廊上线收口（2026-09-13 主对话）
+
+- **CF 写权限打通**：ego-browser 替用户在 dash 创建账号级 token「juyou-gallery-deploy」（Edit Cloudflare Workers 模板 + 1 年期），存 ~/.zcode/.cf-token（600）。**部署实证：CF API 的 secret_text 必须带值上传（10021，按名继承不可用）**→ OSS_SECRET_KEY/ADMIN_TOKEN 从技能 .env 取值；ADMIN_TOKEN 当日轮换，新值=GALLERY_ADMIN_TOKEN（已写入 ~/.agents/skills/.env）。
+- **画廊新版已上线验证**：/api/health ok；递归列举 20 图横跨 5 目录、最新=3/…_gpt-image-2.png；页面含 recursive/minfo/api/meta 逻辑。首页瀑布流=全目录新图时间倒序；卡片带模型/规格 chip+提示词预览（老图无伴档只显基础信息）；灯箱含完整提示词+复制。
+- 部署脚本 deploy-gallery.mjs 已修为实战版（从 .env 读 secret 值）。
+
+## 批次13 · 智能出图双引擎（谷歌 Gemini × GPT 系三档）+ 透明底跨渠道降级（2026-09-13）
+
+### 干了什么
+
+1. **前端五张模型卡平铺**（智能出图 tab）：auto/standard displayName 改「智能出图 · 谷歌 标准」、auto/pro 改「智能出图 · 谷歌 高质量」；新增 `auto/gpt-standard`「智能出图 · GPT 标准·高速」、`auto/gpt-pro`「智能出图 · GPT 高质量」、`auto/gpt-transparent`「智能出图 · GPT 透明底」（models/image/auto/ 下照 smartStandard 同构，无 extraParamsSchema，resolveRequest 返回占位 requestModel；registry eager glob 自动注册零接线）。
+2. **Rust 三条新静态链**（chain.rs）：CHAIN_GPT_STANDARD=[grsai/gpt-image-2.5-flare]、CHAIN_GPT_PRO=[grsai/gpt-image-2.5-sunburst]、CHAIN_GPT_TRANSPARENT=[grsai→666api→juyouapi 的 gpt-image-2]。QUALITY_GPT_* 三常量；**R6 选链顺序**：GPT 档位判断提到 is_i2i 之前（无论有无参考图都走 GPT 链），Gemini 档位维持现状；i2i grsai gpt 防御过滤只对 Gemini 链生效（选链结果为 GPT 链时不走该过滤，透明链含参考图不被误杀，单测锁）。
+3. **R1 Hop.extra_params_overlay**（Option<HashMap<String,Value>>，serde default + skip None，照 display_name 先例，旧 chain_meta_json 兼容）；HopSpec 加 const 布尔标记 transparent_overlay（HashMap 无法 const 构造），透明链三 hop 落成 `{"transparent_background": Value::Bool(true)}`——**Bool 不是字符串**（grsai as_bool() 只认 bool）。
+4. **R2 overlay 合并两处**（commands/ai.rs）：抽 `apply_overlay`（None→Some、Some→逐项 insert 覆盖同名键），submit_hop_inner（换 hop 重提交）与首 hop 直接提交点（req.model 替换后、submit_task 前）都调用；meta.request 快照不烤入 overlay（保持 per-hop 语义）。3 单测。
+5. **R5 同名准入同步**：chain_member_bare_model_names() 链数组补三条新链；前端 CHAIN_MEMBER_MODEL_NAMES 加 gpt-image-2 / gpt-image-2.5-flare / gpt-image-2.5-sunburst。
+6. **666api/juyouapi 透明底提示词式透传**（api666/mod.rs submit_gpt_image_2_task 头部一处，submit_task/generate 两分支共用；juyouapi=Api666Provider 别名自动继承）：extra_params.transparent_background 为 bool true 或字符串 "true" → prompt 尾部换行追加透明提示词（文案/幂等关键字逐字对齐前端 transparentBackground.ts L3-4/L11-21）；幂等：prompt 小写含任一关键字不追加。grsai 侧零改动（原生 background=transparent 参数）。4 单测（追加/字符串true/假值不加/幂等）。
+7. **前端档位化**（autoCapabilities + imageFallback）：ImageAutoQuality 扩五值，resolveAutoImageQuality 精确五值映射（未知兜底 standard）；isAutoImageModelId 覆盖五 id；**R3 空链防护档位化**：buildAutoImageFallback 按档位求交（gpt-transparent→[grsai,666api,juyouapi]、gpt-standard/pro→[grsai]、Gemini 档位维持五渠道全集），交集空→null（入口 ai.chainKeyRequired 拦截），绝不发占位 id；Gemini 档位行为逐字节不变（单测锁）。commands/ai.ts 与 ports.ts 的 fallback quality 联合类型同步扩五值。
+8. **R4 零改动确认**：ModelParamsControls auto tab key 校验走 resolveChainAvailableProviders（五渠道全集），已覆盖 GPT 链渠道，未动。
+
+### 验证
+
+- `cargo check` 0 错；`cargo test` **67 过 0 挂**（批次12 基线 53 + 新增 14：chain.rs 7 / ai.rs 3 / api666 4）
+- `npm run build` 0 错（check-bundle ✓）；`npm test` **56 过**（基线 48 + imageFallback.test 8）
+- grep 自查：真实密钥零出现；未 git commit/push
+- 主对话 smoke 实证（本批不测网络）：grsai flare/sunburst 恢复（17s/18s）；666api gpt-image-2 t2i 正常（22s），透明提示词式实测出真 RGBA（color type 6 + 角落 alpha=0）；juyouapi gpt-image-2 保留链尾（shell 测不通，应用内待真机，链降级吸收）
+- 未验证（需真机）：gpt-transparent 链端到端（含参考图 i2i 编辑分支透明追加）、juyouapi gpt-image-2 实际可用性
+
+### 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `src-tauri/src/ai/chain.rs` | QUALITY_GPT_* 三常量 + CHAIN_GPT_* 三链 + Hop.extra_params_overlay（R1）+ HopSpec.transparent_overlay 标记 + R6 选链顺序/过滤档位化 + R5 链数组 + 7 单测 |
+| `src-tauri/src/commands/ai.rs` | apply_overlay 抽函数 + submit_hop_inner / 首 hop 提交点两处合并（R2）+ 3 单测（本文件首个 test mod） |
+| `src-tauri/src/ai/providers/api666/mod.rs` | submit_gpt_image_2_task 头部透明提示词追加（TRANSPARENT_BACKGROUND_PROMPT_HINT/KEYWORDS/transparent_background_requested/append_transparent_background_hint）+ 4 单测 |
+| `src/features/canvas/models/image/auto/autoCapabilities.ts` | 三个新 id 常量 + ImageAutoQuality 五值 + resolveAutoImageQuality 精确映射 + isAutoImageModelId 扩 |
+| `src/features/canvas/models/image/auto/gptStandard.ts` / `gptPro.ts` / `gptTransparent.ts` | 新增三张模型卡（无 extraParamsSchema，glob 自动注册） |
+| `src/features/canvas/models/image/auto/smartStandard.ts` / `smartPro.ts` | displayName 改「智能出图 · 谷歌 标准/高质量」 |
+| `src/features/canvas/application/imageFallback.ts` | CHAIN_MEMBER_MODEL_NAMES +3（R5）+ chainProviderIdsForQuality 档位交集域 + buildAutoImageFallback 档位求交（R3） |
+| `src/features/canvas/application/ports.ts` / `src/commands/ai.ts` | fallback quality 联合类型扩五值 |
+| `src/features/canvas/application/__tests__/imageFallback.test.ts` | 新增 8 单测（五值映射/模型名集合/档位求交：只配 kie→GPT null、只配 grsai→GPT 全档位非 null、Gemini 行为不变） |
+
+## 批次14 · 抠图工具：任意高饱和纯色背景 → 连续 alpha matting（2026-09-14）
+
+### 干了什么
+
+纯前端批次（零 Rust 改动、零新 npm 依赖），算法源 = image-studio 技能 `_magenta_key`（scripts/image_studio.py L788-833）移植 + 去品红特化。
+
+1. **算法模块 `src/features/canvas/application/matting.ts`**（纯函数 + typed arrays，无 canvas 依赖）：
+   - `estimateKeyColor(data,w,h,x,y)`：点击点 9×9 邻域 RGB 各通道中位数（越界钳制，抗噪抗渐变边）。
+   - `matteSolidBackground(data,w,h,keyColor,opts?)`：前景种子=到键色欧氏距离>fgThreshold(默认60，对应技能 chroma<5 的通用化)；种子腐蚀 1 轮（3×3 全邻域，越界按非种子=border_value 0 对齐 scipy）；**最近种子参考色用两遍 3-4 chamfer 传播**（前向左上→右下、后向右下→左上；正交步权 3、对角步 4，每像素携带最近种子 RGB，O(N) Float64Array+Uint8Array，近似技能 EDT-with-indices）；投影 alpha 逐字移植 py:816 `clamp(dot(px-bg,ref-bg)/max(|ref-bg|²,1),0,1)`；距键色<bgTolerance(30)→alpha=0、种子强制 1、alpha<0.025 清零；unmix 去污染逐字移植 py:821-823（`unmixed=(rgb-(1-α)bg)/max(α,1e-2)`、`w=clamp((α-0.8)/0.2,0,1)`、`fore=clamp(ref+w*(unmixed-ref),0,255)`），种子保原色、透明像素颜色填 ref；已有 alpha 的输入按 RGB 原样处理（straight-alpha 覆盖式输出）；w/h<3 或全图无前景种子 → 原样副本返回。退化保护：腐蚀清空种子时退回腐蚀前种子（细线目标）。
+   - `parseMattingKeyColor`/`stringifyMattingKeyColor`/`read|writeMattingKeyColorFromOptions`：keyColor 兼容 `[r,g,b]` 数组 / `"[r,g,b]"` / `"r,g,b"` 三形态读写。
+2. **vitest `__tests__/matting.test.ts`**（11 用例，合成 Uint8ClampedArray 无 canvas）：纯背景→alpha=0；中心目标→alpha=255 保原色；边缘 t=0.2 混色像素→alpha 精确 51/255（连续非二值，输入 alpha 被覆盖）；品红/绿/蓝三键色等价；estimateKeyColor 中位数抗噪（4/81 噪点不影响）+ 越界钳制；镂空（背景色包围洞）透；w/h<3 与无种子原样返回；seedErode 0/1 行为。
+3. **工具接入**：`canvasNodes.ts` NODE_TOOL_TYPES +`matting`；`tools/types.ts` ToolIconKey/ToolEditorKind +`'matting'`，CanvasToolPlugin 新增**可选** `isApplyEnabled(options)`（按 options 禁用应用按钮，其他工具不受影响）；`builtInTools.ts` mattingToolPlugin（icon/editor='matting'、supportsNode 走公共 supportsImageSourceNode、options 初始 `{}`、execute→processTool）。
+4. **`ui/tool-editors/MattingToolEditor.tsx`**（照 AnnotateToolEditor Konva Stage 结构，viewportSize 自适应）：底图 KonvaImage；点击 onMouseDown→getImagePoint 先例拿原图坐标→离屏 canvas（loadImageElement）getImageData→estimateKeyColor→写 options.keyColor；**点击即预览**：≤1024px 缩放版跑 matteSolidBackground → PNG dataURL 画到预览 KonvaImage（16px 棋盘格 fillPatternImage 模拟透明底），可反复点选重抠；顶部提示行 + 「自动取色」按钮（复用 toolProcessor 边框主导背景色估计）+ 键色 chip。
+5. **`toolProcessor.ts`**：+matting 分支（loadImageElement→canvas 原尺寸 getImageData→matteSolidBackground 全分辨率→putImageData→PNG dataUrl→`{outputImageUrl}`，走 addDerivedExportNode+addEdge 现有落地链路零改动）；私有 `estimateDominantBorderBackgroundColor` **提为模块级导出纯函数**（算法逐字未动、行为字节级不变，任务书授权的签名适配，内部唯一调用点直接调函数）。
+6. **NodeActionToolbar**：toolIconMap +`matting: Wand2`（lucide）、工具标签 t('tool.matting')；**NodeToolDialog**：标签/结果节点标题（toolDialog.mattingResultTitle）/编辑器宽度 1120px 档（照 annotate）/matting 编辑器分支/应用按钮 disabled 接 plugin.isApplyEnabled（未取色禁用 + title 提示 t('matting.pickFirst')）。
+7. **i18n zh/en**：`tool.matting`（抠图/Matting）、`toolDialog.mattingResultTitle`、`matting.hint/autoPick/pickFirst`。
+
+### 验证
+
+- `npm run build` 0 错（check-bundle ✓，2,232KB 与既有阈值项同水位）；`npm test` **67 过**（基线 56 + matting 新增 11）
+- `npx tsc --noEmit` 0 错；**Rust 零改动**（本批未写任何 src-tauri 文件，git status 中 src-tauri 变更均为批次13 前遗留，mtime 2026-09-13 实证）
+- 未 commit/push；分层：算法 application/、编辑器 ui/，红线未动其他四工具逻辑与公共条件
+
+### 偏离记录
+
+- `keyColor` 在 ToolOptions 里以 `"r,g,b"` 字符串落盘（ToolOptionPrimitive 不收数组，对齐 annotate 的 stringify 惯例）；`parseMattingKeyColor` 兼容任务书数组形态，外部按 `{keyColor:[r,g,b]}` 调 processTool 同样有效。
+- unmix 分母 epsilon 用任务书的 `1e-2`（技能 py 源为 `1e-5`）；因 alphaFloor=0.025 > 两者，实际像素结果零差异。
+- 技能的「亮品红屏幕采样估计键色」被点击取色/自动取色替代（工具语义即人工指定键色）；技能 ValueError 两处（图片太小/无前景采样）改为原样返回副本（工具链无错误通道，宁可不动图）。
+
+### 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `src/features/canvas/application/matting.ts` | 新增：算法模块（estimateKeyColor / matteSolidBackground / keyColor 解析读写） |
+| `src/features/canvas/application/__tests__/matting.test.ts` | 新增：11 单测 |
+| `src/features/canvas/domain/canvasNodes.ts` | NODE_TOOL_TYPES + matting |
+| `src/features/canvas/tools/types.ts` | ToolIconKey/ToolEditorKind + 'matting'；CanvasToolPlugin 可选 isApplyEnabled |
+| `src/features/canvas/tools/builtInTools.ts` | mattingToolPlugin 注册（数组尾部追加） |
+| `src/features/canvas/ui/tool-editors/MattingToolEditor.tsx` | 新增：点击取色 + 即时预览 + 自动取色编辑器 |
+| `src/features/canvas/application/toolProcessor.ts` | matting 分支 + matteImage；estimateDominantBorderBackgroundColor 提为导出纯函数（行为不变） |
+| `src/features/canvas/ui/NodeToolDialog.tsx` | 标签/结果标题/1120 宽度/编辑器分支/应用禁用 |
+| `src/features/canvas/ui/NodeActionToolbar.tsx` | toolIconMap + Wand2；工具标签 |
+| `src/i18n/locales/zh.json` / `en.json` | tool.matting / toolDialog.mattingResultTitle / matting.* 3 key |
+
+## 批次15 · 抠图算法科学化升级（多键色 + 影子识别 + 边缘去污染）（2026-09-14）
+
+### 干了什么
+
+纯前端批次（零 Rust、零新 npm 依赖），在批次14 matting 基础上的四项升级，全部由用户真机样图闭环驱动（任务书 D 项 = 本批最重要流程）。
+
+1. **A 多键色**：`matteSolidBackground(data,w,h,keyColor|keyColors,options)` 接受 1~4 个键色（`MAX_KEY_COLORS=4`），逐像素取最近键（欧氏距离）参与背景距离 / 容差清零 / 投影 / 影子检测；调用方兼容旧单键入参形态（`normalizeKeyColors` 识别 `[r,g,b]` 单键与 `[[r,g,b],...]` 多键）。
+2. **B 亮度缩放键匹配（Primatte 式影子识别）**：`s* = dot(P,K)/dot(K,K)` 钳到 [0.15,1.0]，`||P − s*·K|| < shadowTolerance`（默认 **45**，任务书建议 34 经样图迭代上调）→ 判背景。三重门防误杀（样图实证缺一不可）：
+   - **色度方向门**：色度向量模长 > 4 时要求 `cos(P−gray(P), K−gray(K)) ≥ 0.9`——深棕球杆（vs 暗紫地面键色度方向正交）不被吞；
+   - **键领地密度门**：41×41 邻域内该键的容差背景像素占比 ≥ 0.15（积分图实现，Primatte detail 区域离散近似）——深色头发块虽在暗紫地面键轴上但那片区域没有地面；
+   - **边界连通门**：影子判定须与图边背景四连通才生效（BFS 走「容差∪影子」联合掩膜）——裙子内部的孤立影子判定被营救。
+3. **C 边缘去污染**：
+   - **色度轴 despill**（`_despill` 通用化）：`spill = dot(P−ref, u)`、`u = normalize(K−luma(K))`，spill>0 时收回；**过中和保护**：以像素自身灰点为界截断（`min(spill, spillSelf)`），防止品红溢出扣过头变假绿（绿 speckle 根因）；作用域 = 半透明带 0<α<0.9 + 边界带 α=1 种子（对齐 `_despill` 的 in_band 含不透明贴边像素）；
+   - **半透明带 ref 强化**：unmix 信任曲线 `w=clamp((α−0.5)/0.4,0,1)`（0.8→0.5 渐入）；α<0.35 边缘像素 RGB 直接填最近种子 ref（原仅 α=0 填充）；
+   - **种子保守化**：腐蚀 1→2 轮；双门 = 强前景（dist>fgThreshold×1.5，绕过腐蚀保细线）∨ 经腐蚀仍存活；**边界带种子去污染**：用「腐蚀内核」参考色对强前景绕过的边界种子先 despill，再以去污染后的种子传播参考色（绿晕/粉边根因修复）。
+4. **D 真实样图闭环**：`scripts/matting-harness.mjs`（不入 src/、不进 npm test 主链）——最小 PNG 编解码（8/16-bit、colorType 0/2/4/6、filter 0-4、node:zlib；node_modules 无 pngjs 已实证）、`--keys auto|r,g,b|...`、`--max` 降采样、`--over` 合成底色检查图、`--stats` 指标、`--dump-fixture` 生成回归 fixture；node 24 原生 type-stripping 直接 import matting.ts，零构建零依赖。达标结论（Read 目视迭代 6 轮）：
+   - **绿幕源**（768×1376，16-bit PNG）：自动取键 2 键（`9,210,24|6,162,29`）→ **达标**：无绿晕（发丝间也净）、脚下阴影消失、人物完整；
+   - **品红渐变源**（1536×2752）：自动取键 3 键（`244,5,197|125,65,104|151,101,124`）→ **达标**：暗紫地面与脚下影子全透、无粉边，深色衣裙/马甲完整（B 项影子识别曾把裙中央/马甲成片误杀，靠三重门修复），深棕球杆完整（色度方向门修复）。
+
+### 编辑器与接入
+
+- **MattingToolEditor**：色板 chips（点击累加 1~4、重复点击去重、满 4 淘汰最早、点 chip 删除）；「自动取色」升级为 `sampleBorderKeyColors` 边框主色聚类（5bit/通道分桶 + 计数贪心聚类，纯色 1 键 / 墙+地面 2~4 键）；任一变更自动重抠预览。
+- **toolProcessor** matting 分支透传 `keyColors`（`readMattingKeyColorsFromOptions` 兼容回落旧单键 `keyColor`）；builtInTools `isApplyEnabled` 同步 plural 读。
+- **options 落盘**：`keyColors` 字段 `"r,g,b|r,g,b"` 竖线串（写时清旧 `keyColor` 字段避免双真源；读时优先 `keyColors` 回落 `keyColor`，老项目兼容）。
+- **i18n zh/en**：`matting.hint` 更新为「可连续点击多个背景色（最多 4 个）」、新增 `matting.removeKey`。
+
+### 文件规模
+
+matting.ts 升级后 1059 行超 AGENTS.md 1000 行强制拆分线 → 键色解析/序列化/边框取键聚类拆至 `mattingKeys.ts`（257 行），matting.ts 828 行（核心算法），matting.ts 统一 re-export 既有导入路径不受影响（matting.ts 内部 import 带 `.ts` 扩展名以兼容 node 原生 type-stripping 直跑 harness）。
+
+### 验证
+
+- `npm run build` 0 错（check-bundle ✓，2,238.83KB 与批次14 的 2,232KB 同水位）；`npm test` **85 过**（基线 67 + 批次15 新增 18）；`npx tsc --noEmit` 0 错
+- Rust 零改动（git status 中 src-tauri 变更均为批次13 前遗留，mtime 2026-09-13/14 早于本批实证）；未 commit/push
+- harness 在 scripts/ 不进 src/（check-bundle 扫 dist 实证干净）
+
+### 回归单测（+18）
+
+多键最近匹配（双键双背景清除 / 单键对照 / 超上限截断）；s* 影子识别（0.35×键影子带清零 / 色度方向不同的棕块存活 / `shadowTolerance=0` 关闭）；despill 方向与作用域（半透明带 spill 收回 / 种子保原色 / α=0 填 ref）；种子双门（孤点弱前景不入选 / 5×5 弱块腐蚀存活 / 强前景孤点绕过腐蚀）；`sampleBorderKeyColors` 聚类（渐变+双底多键 / 纯色单键）；keyColors options 读写（四形态解析 / 截断 / 写清旧字段 / 旧单键回落）；**真实样图缩样回归**（128px fixture 内嵌 base64，`__tests__/mattingFixtureData.ts` 纯数据 + `pngDecode.ts` 测试专用解码——@types/node 缺失故用 DecompressionStream 而非 node:zlib）锁指标：边缘带最大色距 ≤90（实测 43.0/31.6）、左右边条 α=0 占比 ≥0.95（实测 1.0/0.993）、全图 α=0 占比（实测 0.703/0.732）、头部区 α>200 占比（实测 0.831/0.749）。
+
+### 偏离记录
+
+- `shadowTolerance` 默认 34→**45**：绿幕背景暗角（38,193,47，残差 38.4）在 34 下漏抠成绿丝，45 全清且实测两图无副作用。
+- 影子识别三重门（色度方向 / 键领地密度 / 边界连通）为任务书 B/C 之外的新增机制：真机样图暴露「深色前景色度上与暗背景键轴同族」（品红图裙子/马甲/发丝块被影子识别成片误杀、球杆被吃），纯颜色判定不可解，按 Primatte detail 区域语义补空间门。
+- despill 过中和保护（`min(spill, spillSelf)`）：任务书公式全额扣减会把品红混合像素扣到补色侧产生假绿 ref 污染，对齐 `_despill` 原义（只扣「超出亮度」的溢出）加界。
+- 前景保护带（影子判定对真前景候选 1px 膨胀区不生效）：批次14 锁定的 t=0.2 混色环 α=51 指标与影子识别冲突（前景靠灰时混色像素天然近键轴），保护带两者兼得。
+- 任务书「暗紫地面 = 品红×0.35」与实图不符：实际地面是「提亮的品红灰」（s*≈0.73-1.0，s<0.55 无真实背景像素分布），影子识别实际由多键（A 项）+ 容差覆盖，s 范围按任务书保持 [0.15,1.0]。
+- 已知残留（不阻断达标）：品红图脚下亮面地板反射（色度与皮肤几乎同色，dist≈22）无法纯颜色分离，现为贴地淡反射薄雾存留；绿幕图杆尖 1px 级软边。批量验收以任务书两图达标线为准。
+- 主对话验收轮修复（2026-09-14）：① 品红图手臂浅带/浅斑 = 阴影皮肤细褶皱（到键距离刚过阈值 1-2px）经 seedErode=2 腐蚀整条失去种子 → 投影 α≈0.5 半透明浅带；修法 = seedErode 默认 2→0（全部候选入选，混色排除交给种子去污染），种子去污染改为「细结构才自中和」——needs 掩膜（spillSelf>40 且 cos≥0.6）经腐蚀 3 轮+膨胀回补的形态学开运算裁决，厚区域肤影保留、薄区域绿丝/混色带一次中和到位。② 绿幕图头顶发丝绿丝 = 链式部分校正残留（ref 本身偏绿时欠校正）；随上述自中和一次到位解决。③ 品红图脚下地板反射薄雾：知悉接受（色度与皮肤 dist≈22 不可分）。
+
+### 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `src/features/canvas/application/matting.ts` | 升级：多键色 / s* 影子识别三重门 / despill+过中和 / ref 强化 / 种子双门+边界带去污染（828 行） |
+| `src/features/canvas/application/mattingKeys.ts` | 新增：键色解析/序列化/边框取键聚类（257 行，matting.ts re-export） |
+| `src/features/canvas/ui/tool-editors/MattingToolEditor.tsx` | 色板 chips 1~4 + 自动取色聚类 + 多键预览 |
+| `src/features/canvas/application/toolProcessor.ts` | matteImage 透传 keyColors |
+| `src/features/canvas/tools/builtInTools.ts` | isApplyEnabled 多键读 |
+| `src/i18n/locales/zh.json` / `en.json` | matting.hint 更新 + matting.removeKey |
+| `src/features/canvas/application/__tests__/matting.test.ts` | +18 用例（多键/s*/despill/双门/聚类/options/样图回归） |
+| `src/features/canvas/application/__tests__/mattingFixtureData.ts` | 新增：真实样图 128px fixture 内嵌 base64（纯数据） |
+| `src/features/canvas/application/__tests__/pngDecode.ts` | 新增：测试专用最小 PNG 解码（DecompressionStream，无 node API） |
+| `scripts/matting-harness.mjs` | 新增：真实样图闭环 harness（PNG 编解码 + 自动取键 + 指标 + fixture 导出；不入 src/） |
+
+## 批次15a · 品红管线回归修复（2026-09-14，主对话验收）
+
+- 用户真机反馈：v0.4.2 绿幕很好、品红反不如 v0.4.1。裁决=按键色组自动路由管线：`isGreenKey`（g−max(r,b)≥25）全绿键→批次15 完整管线；任一非绿→**v0.4.1 温和管线**（seedErode=1/无 despill/无影子门/无自中和/unmix 0.8）+ 多键最近匹配基建共享。编辑器零改动，美术零感知。
+- 硬校验：gentle 与批次14 内联参考实现**逐像素 RGBA 全等**（两合成场景）；绿幕回归无回潮。npm test 110 过。真实样图四轮目视验收存档 /tmp/matting-verify/。
+- 遗留裁决：matting.ts 1079 行超 1000 行拆分线（绿管线可拆独立模块）——暂缓，后续安静批次再拆。
+- 并行说明：本修复与批次16（AI 抠图）并行执行，文件白名单隔离（修复只碰 matting*/tests/harness，文档由主对话统一回写）。
+
+## 批次16 · AI 抠图工具（内网 SAM-HQ，独立第六工具）（2026-09-14）
+
+### 干了什么
+
+与「抠图」（键色 matting）并列的独立新工具：内网 SAM-HQ 两段式（embed/decode）点选式抠图。
+**不动 matting.ts / MattingToolEditor 一字**；键色抠图另有管线路由（见批次16 补充·matting 管线路由）。
+
+1. **Rust 代理 `src-tauri/src/commands/sam.rs`**（内网服务无 CORS 头，必须走 reqwest）：
+   - `sam_health(base_url)`：GET /api/sam/health，5s 超时，透传 ok/service/version/device/models/max_upload_mb；
+   - `sam_embed(base_url, image_base64, model)`：multipart（字段 file+model）→ 60s 超时 → `{embedId, model, width, height, cached}`；
+   - `sam_decode(base_url, embed_id, model, points)`：JSON POST（点=原图像素 [x,y,label]）→ 30s → 蒙版 PNG base64；
+     **404（embed expired）以结构化错误 kind=embed_expired 传给前端**（触发自动重 embed + 重放全部历史点）；
+   - 全局 http client（ai::http）+ 按接口限超时；参数校验纯函数（base_url 归一化/模型白名单/点格式）+ 5 单测。
+2. **前端桥 `src/commands/sam.ts`**：三个 invoke 封装 + `SamServiceError`（kind: network/http/bad_request/embed_expired/service）。
+3. **纯函数编排 `src/features/canvas/application/aiMatting.ts`**：点列表增删/清空、`pointsToTriples`、
+   `decodeMaskWithRecovery`（404 → 重 embed → **重放全部历史点一次**，只重试一次）、
+   `upsampleMaskBilinear`（手写双线性，256→原图尺寸）、`featherMask`（1px 盒式羽化）、`maskForegroundRatio`（全黑检测）。
+4. **编辑器 `ui/tool-editors/AiMattingToolEditor.tsx`**：进入先 sam_health（不通→人话提示+[重试]，通→自动 embed vit_t）；
+   左键=正点(1)、右键=负点(0)（onContextMenu preventDefault）；点变更自动 decode（请求序号防并发）；
+   点 chips（正绿负红可删）+ 清空；模型切换 vit_t/vit_b（重新 embed，已有点保留并自动重 decode）；
+   蒙版全黑提示；蒙版预览 = 原图经羽化蒙版 destination-in 合成叠棋盘格底；
+   应用 = 原尺寸合成（蒙版双线性放大回原图 + 1px 羽化 + putalpha）写 options.aiMattingResultDataUrl；
+   超大图（长边>4096）embed 前等比降采样上传（蒙版放大回原尺寸，输出不降分辨率）。
+5. **工具注册**：NODE_TOOL_TYPES.aiMatting（'ai-matting'）；ToolIconKey/ToolEditorKind +'aiMatting'（lucide Scan）；
+   builtInTools aiMattingToolPlugin（isApplyEnabled=有合成结果）；NodeToolDialog 宽度/编辑器/结果标题/应用提示分支；
+   NodeActionToolbar toolIconMap + 工具标签；toolProcessor aiMatting 分支（校验并透传编辑器合成结果）。
+6. **设置**：settingsStore v22→v23 新增 `aiMattingBaseUrl`（默认 `http://192.168.1.188:8760`，normalize 纯函数+3 单测）；
+   设置页「资产归档」分类下新增 AiMattingServicePanel（地址输入即时落 store + 测试连接）。
+
+### 本机联调结论（内网可达，实测 2026-09-14）
+
+- health：`{"ok":true,"service":"sam-hq-matting","version":"1.0","device":"directml","models":{"vit_t":true,"vit_b":true}}` ✓
+- embed vit_t（真实样图降采样 512×917）：92ms，返回 embed_id + 原图尺寸；同图重 embed `cached:true`（内容哈希去重）✓
+- decode：25ms，256×256 灰度 PNG ✓；多点（正+负）decode ✓；单点前景占比 0.076（人物半身占画面比例合理）
+- vit_b 换模型重 embed ✓（编码不通用已实证）；404 `{"ok":false,"error":"embed expired"}` ✓（前端自动恢复路径依赖此响应）
+- 恐龙基准（文档 0.633）无对应测试图未复跑；已用真实样图建立等效回归（前景占比 + 端到端流程）
+
+### 验证
+
+- `cargo check` 0 错；`cargo test` **72 过**（基线 67 + sam 新增 5）
+- `npm run build` 0 错（check-bundle ✓）；`npm test` **110 过**（基线 86 + 批次16 新增 24：aiMatting 12 + v23 迁移 3 + 描述性断言迁移调整）
+- Rust 零业务改动（sam.rs 为新增命令模块）；不 commit/push
+
+### 走查清单（联调排错速查，源：API 文档第五节）
+
+| 现象 | 处理 |
+|---|---|
+| 连不上/超时 | 服务停用；设置页地址核对；面板 `schtasks /Run /TN "SAM-HQ Matting"` |
+| health models 有 false | 模型文件缺失/未加载，查服务端 sam_server.log |
+| 404 embed expired | 前端已自动重 embed + 重放点；若频发=缓存被挤（64 条 LRU）或服务重启 |
+| 400 model 校验 | 只允许 vit_t / vit_b |
+| 400 points 校验 | 每点必须 [x, y, 0或1]，至少 1 个点 |
+| 蒙版全黑 | 前端已提示「试点主体中心或多加正点」 |
+| 抠出局部细节 | 用了 vit_b，换 vit_t 重新 embed |
+
+### 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `src-tauri/src/commands/sam.rs` | 新增：SAM-HQ 代理三命令 + 参数校验 + 5 单测 |
+| `src-tauri/src/commands/mod.rs` / `src-tauri/src/lib.rs` | 注册 sam 模块与三命令 |
+| `src/commands/sam.ts` | 新增：invoke 封装 + SamServiceError |
+| `src/features/canvas/application/aiMatting.ts` | 新增：点管理 / 404 恢复编排 / 蒙版放大羽化 / 前景占比（纯函数） |
+| `src/features/canvas/application/__tests__/aiMatting.test.ts` | 新增：12 单测 |
+| `src/features/canvas/ui/tool-editors/AiMattingToolEditor.tsx` | 新增：点选式编辑器 |
+| `src/features/canvas/domain/canvasNodes.ts` / `tools/types.ts` / `tools/builtInTools.ts` | 工具注册 |
+| `src/features/canvas/ui/NodeToolDialog.tsx` / `NodeActionToolbar.tsx` | 宽度/编辑器/结果标题/图标/标签分支 |
+| `src/features/canvas/application/toolProcessor.ts` | aiMatting 分支（透传编辑器合成结果） |
+| `src/stores/settingsStore.ts` / `settingsMigration.ts` | v23 aiMattingBaseUrl + normalize 纯函数 |
+| `src/stores/__tests__/settingsMigration.test.ts` | +3 v23 迁移单测 |
+| `src/features/settings/AiMattingServicePanel.tsx` / `SettingsDialog.tsx` | 服务地址面板 + 挂载 |
+| `src/i18n/locales/zh.json` / `en.json` | tool.aiMatting / toolDialog.aiMattingResultTitle / aiMatting.* / aiMattingService.* |
+
+## 事故记录 · AI 抠图 embed「异常载荷」误报（2026-09-14，主对话修复）
+
+- **症状**：真机 AI 抠图必报「embed 失败：服务返回异常载荷」。
+- **根因**：`sam.rs` 三个响应结构体挂了 `#[serde(rename_all = "camelCase")]`，而 SAM 服务返回 snake_case（`embed_id`/`vit_t`/`max_upload_mb`）→ serde 找不到 `embedId` 走 default 空串 → `embed_id.is_empty()` 误判「异常载荷」。health 误报被掩盖（只看 ok 字段）。集成测试当时用 curl 验的服务端、单测没覆盖真实响应原文——两层都漏。
+- **诊断法**：本机 curl 同图成功 → 临时 Rust 探针走 `sam_embed` 命令本体复现 Err → 二分隔离（字节往返 ✓ / 全局 client ✓）→ 锁定解析层 → 原始响应体抓包实锤 snake_case。
+- **修复**：响应结构体去 camelCase（服务端说什么就收什么）；`SamModelsStatus` rename+alias 双兼容（de 吃 vit_t / ser 吐 vitT 给前端）；错误透传服务端 `error` 原文（不再吞）；3 个真实响应原文回归锁。
+- **验证**：cargo test 75 过；探针走命令本体 Ok 断言通过（同图同路径由 Err 转 Ok）。测试已随探针清理，回归锁留在 sam.rs。
+- **教训**：跨语言代理层的集成测试必须用**真实响应原文**做解析断言，不能只测服务端可达（curl 通 ≠ 命令通）。
+
+### 客户端蒙版增强（批次16 追加，纯前端）
+
+服务端只回 256×256 蒙版，直接双线性放大有块状边/发丝孔洞；客户端过渡优化（不改服务端协议），
+decode 后链路升级为：**fillMaskHoles → upsampleMaskGuided → featherMask（1px 羽化）**，默认全开无设置项。
+
+1. **`fillMaskHoles(gray,w,h)`**（aiMatting.ts）：四边界背景泛洪 BFS，不可达边界的背景区=孔洞填前景
+   （修头发黑斑/四肢碎裂）；4 单测（封闭孔洞/开放凹角/全背景/全前景）。
+2. **`upsampleMaskGuided(mask256, guideRgba, guideW, guideH, radius=8, eps=1e-3)`**：以原图亮度为引导 I 的
+   引导滤波（局部线性模型，box filter 积分图 O(N)）上采样，边缘按图像结构对齐；超大图内部自动
+   降采样到 ≤6M 像素工作域滤波后再放大回原尺寸（radius 按比例换算），不崩内存；4 单测
+   （边缘位置钉在引导边缘 ±1px、单步跃变陡于双线性、无结构域退化平滑、大图网格图不崩）。
+3. **自动布点**：编辑器新增「自动布点」按钮——`generateAutoPoints`（中心 + 3×2 偏内 4 点，
+   与既有正点按 6% 对角线去重，返回新增点）→ 点变更 effect 自动 decode；3 单测（数量/去重/钳制）。
+4. **联调数字**（真实服务 + 512×917 样图单点 vit_t）：256 蒙版孔洞填充 2px；前景占比 plain/guided 均
+   0.076（无整体偏移）；边缘最大单步跳变 plain 127 → guided 228（边缘对齐图像结构约 2 倍陡）；
+   羽化后 0-255 全域。i18n：aiMatting.autoPlace。
+
+## 批次16b · SAM-HQ 服务端升级兼容化 + BiRefNet 一键去底（2026-09-14）
+
+背景：内网 SAM 服务升级 v1.1（蒙版 256→1024、补 vit_l 档规划、新增 BiRefNet 全分辨率 RGBA 端点，
+参考 xyflow/SAM-HQ-升级方案.md）。本批 = 前后兼容适配（新旧服务都可用）+ BiRefNet 零交互工具落地。
+**不动 matting.ts/MattingToolEditor 一字**；AiMattingToolEditor 只动兼容三处，点选业务逻辑零改动。
+
+### 服务端升级兼容化（新旧服务双路径都工作）
+
+1. **蒙版尺寸动态化**：`AiMattingToolEditor` 删 `MASK_SIZE=256` 常量（grep 全清）；
+   `decodeMaskWithRecovery` 的 decode 回调改返 `DecodedMask{mask,width,height}`（PNG 实际宽高透传），
+   下游 `fillMaskHoles`/`upsampleMaskGuided` 宽高参数接它——旧服务 256 / v1.1 1024 蒙版均自适应。
+2. **灰度通道健壮化**：新纯函数 `rgbaToGrayLuminance`（0.299R+0.587G+0.114B 取整）替换「取红通道」——
+   灰度蒙版逐像素等价（单测锁），RGB/RGBA 彩色载荷更稳（纯红蒙版旧读法 255 全前景 → luminance 76）。
+3. **模型档自适应**：Rust health `models` 改吃 `HashMap<String,bool>` 动态透传
+   （`resolve_model_list`：enabled 过滤 + vit_t/vit_b/vit_l 固定序 + 未知档字典序排后）；
+   前端 `SamModel` 放宽为 string（运行时以 health.models 为唯一真相源）；
+   编辑器按 health.models 动态渲染切换按钮（缺失/空兜底 [vit_t,vit_b]，旧服务零变化），
+   当前档被服务端下线时 `pickEffectiveModel` 自动落可用档首项并重 embed；
+   Rust 白名单补 vit_l（仅兜底防拼写错误）。命名：vit_t 整体（快）/ vit_b 细节（HQ）/ vit_l 高召回（大模型）。
+4. **服务信息透出**：health DTO 补 `birefnet`/`maskSize`（旧服务缺省 false/256）；
+   设置页 AiMattingServicePanel 连通后补一行小字 `device · models · BiRefNet ✓/✗ · mask 1024`。
+
+### BiRefNet 一键去底（第七个工具，零交互 immediate 形态）
+
+- **形态取舍**：BiRefNet 全分辨率软 alpha、零交互、单张 ~0.3s——开对话框只剩一个「应用」按钮，
+  纯增加一次点击。故 `CanvasToolPlugin` 新增可选 `immediate` 标记（`editor` 改可选）：
+  工具条按钮点击即执行（按钮 loading 转圈），结果复用 NodeToolDialog 既有落地链路
+  （prepareNodeImage → addDerivedExportNode + addEdge 建新节点连线），失败 showErrorDialog。
+  无编辑器插槽，NodeToolDialog/EditorKind 零改动。
+- **Rust**：`biref_matting` 壳正式注册进 lib.rs；错误人话映射 `map_biref_error`
+  （503=BiRefNet 模型未加载（服务端）/ 413=图片超过 50MB / 其他=AI 去底服务不可用：…）。
+- **前端链路**：NODE_TOOL_TYPES.aiBirefMatting（'ai-biref-matting'）→ builtInTools 插件
+  （immediate:true，supportsNode 同其他抠图工具）→ NodeActionToolbar immediate 分支（Eraser 图标，
+  title「一键 AI 去底（需内网）」）→ toolProcessor 分支：persistImageLocally → loadImageElement
+  → 长边 >4096 等比降采样（`resolveSamUploadSize` 纯函数，与 SAM embed 同约束）→ birefMatting
+  → RGBA dataURL 直返（不经抠图二次处理）。
+- **i18n**：tool.aiBirefMatting / toolDialog.aiBirefMattingResultTitle / aiBirefMatting.{buttonTitle,failed,offline}（zh/en）。
+
+### 验证
+
+- 真实服务 v1.1 curl 实测：health `birefnet:true, mask_size:1024` ✓；BiRefNet multipart `file`
+  字段 200/0.11s/RGBA PNG（colortype 6）全尺寸直返 ✓
+- `cargo check` 0 错；`cargo test` **81 过**（基线 75 + 6：vit_l 白名单/升级 health 解析/models 排序/
+  biref 壳校验/错误映射/v1.1+旧版 health 双 payload）
+- `npm run build` 0 错（check-bundle ✓）；`npm test` **136 过**（基线 121 + 15：luminance 3/
+  模型自适应 3/蒙版尺寸透传 1/biref 工具注册 5/上传尺寸 3）
+- 不 commit/push；CORS 代理路线不脱（记录在案）；BiRefNet 按钮不接编辑器、aiMatting 点选路径零行为变化
+
+### 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `src-tauri/src/commands/sam.rs` | models HashMap 动态化 + resolve_model_list；health DTO +birefnet/mask_size；白名单 +vit_l；biref_matting 落地（map_biref_error 人话映射）；+6 单测 |
+| `src-tauri/src/lib.rs` | 注册 biref_matting |
+| `src/commands/sam.ts` | SamModel 放宽 string；SamHealthInfo models:string[]+birefnet/maskSize；birefMatting 封装 |
+| `src/features/canvas/application/aiMatting.ts` | DecodedMask 尺寸透传；rgbaToGrayLuminance；resolveAvailableModels/pickEffectiveModel；resolveSamUploadSize |
+| `src/features/canvas/application/toolProcessor.ts` | aiBirefMatting 分支（降采样→birefMatting→RGBA dataURL） |
+| `src/features/canvas/ui/tool-editors/AiMattingToolEditor.tsx` | 兼容三处：MASK_SIZE 全清接实际宽高 / luminance 灰度 / 模型档 health 驱动 |
+| `src/features/canvas/domain/canvasNodes.ts` | NODE_TOOL_TYPES.aiBirefMatting |
+| `src/features/canvas/tools/types.ts` / `builtInTools.ts` | immediate/editor 可选插槽 + aiBirefMattingToolPlugin |
+| `src/features/canvas/ui/NodeActionToolbar.tsx` | immediate 分支（点击即执行/转圈/落节点/错误弹窗）+ Eraser 图标 + 标签 |
+| `src/features/settings/AiMattingServicePanel.tsx` | health 小字：device · models · BiRefNet ✓/✗ · mask 尺寸 |
+| `src/i18n/locales/zh.json` / `en.json` | aiMatting.modelLarge；tool.aiBirefMatting / toolDialog.aiBirefMattingResultTitle / aiBirefMatting.* |
+| `src/features/canvas/application/__tests__/aiMatting.test.ts` | +7 单测（luminance/模型自适应/尺寸透传/上传尺寸） |
+| `src/features/canvas/tools/__tests__/aiBirefMattingTool.test.ts` | 新增：5 单测（注册/immediate 形态/supportsNode/排序/execute 透传） |

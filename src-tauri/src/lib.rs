@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use commands::ai as ai_commands;
+use commands::sam as sam_commands;
 use commands::assets;
 use commands::image;
 use commands::project_state;
@@ -194,6 +195,7 @@ pub fn run() {
             ai_commands::set_api_key,
             ai_commands::set_oss_config,
             ai_commands::test_oss_archive,
+            ai_commands::archive_image_manual,
             ai_commands::reverse_prompt,
             ai_commands::craft_image_prompt,
             ai_commands::set_juyouapi_base_url,
@@ -223,6 +225,10 @@ pub fn run() {
             system::get_runtime_system_info,
             system::log_frontend_event,
             update::check_latest_release_tag,
+            sam_commands::sam_health,
+            sam_commands::sam_embed,
+            sam_commands::sam_decode,
+            sam_commands::biref_matting,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

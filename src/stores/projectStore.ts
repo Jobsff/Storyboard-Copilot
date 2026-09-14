@@ -729,10 +729,10 @@ interface ProjectState {
   currentProject: Project | null;
   isHydrated: boolean;
   isOpeningProject: boolean;
-  currentPage: 'projects' | 'toolbox';
+  currentPage: 'projects' | 'toolbox' | 'gallery';
 
   hydrate: () => Promise<void>;
-  setCurrentPage: (page: 'projects' | 'toolbox') => void;
+  setCurrentPage: (page: 'projects' | 'toolbox' | 'gallery') => void;
   createProject: (name: string) => string;
   deleteProject: (id: string) => void;
   renameProject: (id: string, name: string) => void;

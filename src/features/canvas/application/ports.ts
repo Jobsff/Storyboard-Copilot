@@ -33,7 +33,8 @@ export interface GraphImageResolver {
 
 /** 自动降级链选项（仅智能出图虚拟模型注入；不带 = 单点直连）。 */
 export interface GenerateImageFallback {
-  quality: 'standard' | 'pro';
+  /** 批次13：五档（standard/pro + gpt-standard/gpt-pro/gpt-transparent），与 ImageAutoQuality 对齐。 */
+  quality: 'standard' | 'pro' | 'gpt-standard' | 'gpt-pro' | 'gpt-transparent';
   availableProviders: string[];
   /** NEWAPI 接口 / aifast 追加档（批次8，可选；缺省空 = 行为与 v0.3.0 一致）。 */
   extraHops?: Array<{ provider_id: string; model: string; display_name: string }>;

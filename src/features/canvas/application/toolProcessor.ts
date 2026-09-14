@@ -10,7 +10,14 @@ import {
   parseAspectRatio,
   persistImageLocally,
 } from './imageData';
+import {
+  matteSolidBackground,
+  readMattingKeyColorsFromOptions,
+} from './matting';
 import { cropImageSource, readStoryboardImageMetadata } from '@/commands/image';
+import { birefMatting } from '@/commands/sam';
+import { resolveSamUploadSize } from './aiMatting';
+import { useSettingsStore } from '@/stores/settingsStore';
 import { drawAnnotations, parseAnnotationItems } from '../tools/annotation';
 import type {
   IdGenerator,
@@ -18,6 +25,67 @@ import type {
   ToolProcessor,
   ToolProcessorResult,
 } from './ports';
+
+interface DominantColor {
+  red: number;
+  green: number;
+  blue: number;
+}
+
+/** BiRefNet 上传长边上限（对齐 SAM embed 降采样约束，服务端上限 50MB）。 */
+const BIREF_UPLOAD_MAX_DIMENSION = 4096;
+
+/**
+ * 边框主导背景色估计（批次14：从 CanvasToolProcessor 私有方法提为可导出纯函数，
+ * MattingToolEditor「自动取色」复用；算法逐字未动）。
+ */
+export function estimateDominantBorderBackgroundColor(
+  imageData: ImageData
+): DominantColor | null {
+  const { width, height, data } = imageData;
+  const buckets = new Map<string, { count: number; red: number; green: number; blue: number }>();
+  const sample = (x: number, y: number): void => {
+    const index = (y * width + x) * 4;
+    if (data[index + 3] === 0) {
+      return;
+    }
+    const red = data[index];
+    const green = data[index + 1];
+    const blue = data[index + 2];
+    const key = `${red >> 4},${green >> 4},${blue >> 4}`;
+    const bucket = buckets.get(key) ?? { count: 0, red: 0, green: 0, blue: 0 };
+    bucket.count += 1;
+    bucket.red += red;
+    bucket.green += green;
+    bucket.blue += blue;
+    buckets.set(key, bucket);
+  };
+
+  for (let x = 0; x < width; x += 1) {
+    sample(x, 0);
+    sample(x, height - 1);
+  }
+  for (let y = 1; y < height - 1; y += 1) {
+    sample(0, y);
+    sample(width - 1, y);
+  }
+
+  let best: { count: number; red: number; green: number; blue: number } | null = null;
+  for (const bucket of buckets.values()) {
+    if (!best || bucket.count > best.count) {
+      best = bucket;
+    }
+  }
+  if (!best || best.count < Math.max(8, Math.floor((width + height) / 32))) {
+    return null;
+  }
+
+  return {
+    red: Math.round(best.red / best.count),
+    green: Math.round(best.green / best.count),
+    blue: Math.round(best.blue / best.count),
+  };
+}
 
 export class CanvasToolProcessor implements ToolProcessor {
   constructor(
@@ -68,6 +136,23 @@ export class CanvasToolProcessor implements ToolProcessor {
           outputImageUrl: await this.scaleImage(
             await persistImageLocally(sourceImageUrl),
             options
+          ),
+        };
+      case NODE_TOOL_TYPES.matting:
+        return {
+          outputImageUrl: await this.matteImage(
+            await persistImageLocally(sourceImageUrl),
+            options
+          ),
+        };
+      case NODE_TOOL_TYPES.aiMatting:
+        return {
+          outputImageUrl: this.resolveAiMattingResult(options),
+        };
+      case NODE_TOOL_TYPES.aiBirefMatting:
+        return {
+          outputImageUrl: await this.birefMattingImage(
+            await persistImageLocally(sourceImageUrl)
           ),
         };
       default:
@@ -178,6 +263,74 @@ export class CanvasToolProcessor implements ToolProcessor {
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = 'high';
     context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+    return canvasToDataUrl(canvas);
+  }
+
+  /** AI 抠图（批次16）：结果图由 AiMattingToolEditor 在编辑器内合成，应用时直接落产物。 */
+  private resolveAiMattingResult(options: Record<string, unknown>): string {
+    const result = options.aiMattingResultDataUrl;
+    if (typeof result !== 'string' || !result.startsWith('data:image/')) {
+      throw new Error('AI 抠图结果缺失，请先在预览中点选主体生成蒙版');
+    }
+    return result;
+  }
+
+  /**
+   * AI 去底（BiRefNet，服务端 v1.1）：原图（长边 >4096 先等比降采样，对齐 SAM 上传约束）
+   * → biref_matting 命令 → 全尺寸 RGBA PNG 直返，不经抠图二次处理直接落节点。
+   */
+  private async birefMattingImage(sourceImage: string): Promise<string> {
+    const image = await loadImageElement(sourceImage);
+    const upload = resolveSamUploadSize(
+      image.naturalWidth,
+      image.naturalHeight,
+      BIREF_UPLOAD_MAX_DIMENSION
+    );
+    const canvas = document.createElement('canvas');
+    canvas.width = upload.width;
+    canvas.height = upload.height;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      throw new Error('无法初始化画布');
+    }
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(image, 0, 0, upload.width, upload.height);
+    const dataUrl = canvasToDataUrl(canvas);
+    const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+    const rgbaBase64 = await birefMatting(
+      useSettingsStore.getState().aiMattingBaseUrl,
+      base64
+    );
+    return `data:image/png;base64,${rgbaBase64}`;
+  }
+
+  /** 抠图（批次14；批次15 多键色透传）：全分辨率 matteSolidBackground → straight-alpha PNG。 */
+  private async matteImage(sourceImage: string, options: Record<string, unknown>): Promise<string> {
+    const keyColors = readMattingKeyColorsFromOptions(options);
+    if (!keyColors || keyColors.length === 0) {
+      throw new Error('未指定抠图键色，请先在预览中取色');
+    }
+
+    const image = await loadImageElement(sourceImage);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, image.naturalWidth);
+    canvas.height = Math.max(1, image.naturalHeight);
+
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) {
+      throw new Error('无法初始化画布');
+    }
+
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    const result = matteSolidBackground(imageData.data, canvas.width, canvas.height, keyColors);
+    context.putImageData(
+      new ImageData(result.data, canvas.width, canvas.height),
+      0,
+      0
+    );
 
     return canvasToDataUrl(canvas);
   }
@@ -472,8 +625,8 @@ export class CanvasToolProcessor implements ToolProcessor {
 
   private resolveChromaBackgroundColor(
     imageData: ImageData
-  ): { red: number; green: number; blue: number } | null {
-    const borderColor = this.estimateDominantBorderBackgroundColor(imageData);
+  ): DominantColor | null {
+    const borderColor = estimateDominantBorderBackgroundColor(imageData);
     if (borderColor && this.isChromaKeyColor(borderColor)) {
       return borderColor;
     }
@@ -484,54 +637,6 @@ export class CanvasToolProcessor implements ToolProcessor {
     }
 
     return null;
-  }
-
-  private estimateDominantBorderBackgroundColor(
-    imageData: ImageData
-  ): { red: number; green: number; blue: number } | null {
-    const { width, height, data } = imageData;
-    const buckets = new Map<string, { count: number; red: number; green: number; blue: number }>();
-    const sample = (x: number, y: number): void => {
-      const index = (y * width + x) * 4;
-      if (data[index + 3] === 0) {
-        return;
-      }
-      const red = data[index];
-      const green = data[index + 1];
-      const blue = data[index + 2];
-      const key = `${red >> 4},${green >> 4},${blue >> 4}`;
-      const bucket = buckets.get(key) ?? { count: 0, red: 0, green: 0, blue: 0 };
-      bucket.count += 1;
-      bucket.red += red;
-      bucket.green += green;
-      bucket.blue += blue;
-      buckets.set(key, bucket);
-    };
-
-    for (let x = 0; x < width; x += 1) {
-      sample(x, 0);
-      sample(x, height - 1);
-    }
-    for (let y = 1; y < height - 1; y += 1) {
-      sample(0, y);
-      sample(width - 1, y);
-    }
-
-    let best: { count: number; red: number; green: number; blue: number } | null = null;
-    for (const bucket of buckets.values()) {
-      if (!best || bucket.count > best.count) {
-        best = bucket;
-      }
-    }
-    if (!best || best.count < Math.max(8, Math.floor((width + height) / 32))) {
-      return null;
-    }
-
-    return {
-      red: Math.round(best.red / best.count),
-      green: Math.round(best.green / best.count),
-      blue: Math.round(best.blue / best.count),
-    };
   }
 
   private estimateDominantChromaBackgroundColor(

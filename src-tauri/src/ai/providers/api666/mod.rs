@@ -1130,12 +1130,69 @@ fn extract_image_source_from_value(value: &Value) -> Option<String> {
     }
 }
 
+/// 批次13 · 透明底提示词（逐字对齐前端 transparentBackground.ts L3-4）：
+/// 666api / juyouapi 的 gpt-image-2 无原生透明参数，走提示词式透明兜底。
+const TRANSPARENT_BACKGROUND_PROMPT_HINT: &str =
+    "背景要求：背景透明，真实 PNG，RGBA 模式，Alpha 通道真实有效，背景区域 Alpha 值为 0，不允许棋盘格、白底、灰底、伪透明背景。";
+
+/// 幂等关键字（逐字对齐前端 transparentBackground.ts L11-21 清单，小写比对）。
+const TRANSPARENT_BACKGROUND_KEYWORDS: &[&str] = &[
+    "透明背景",
+    "alpha=0",
+    "alpha = 0",
+    "alpha通道",
+    "alpha 通道",
+    "alpha channel",
+    "带有 alpha 通道",
+    "transparent background",
+    "background transparent",
+];
+
+/// extra_params.transparent_background 为 bool true 或字符串 "true" 才算请求透明底。
+fn transparent_background_requested(request: &GenerateRequest) -> bool {
+    request
+        .extra_params
+        .as_ref()
+        .and_then(|params| params.get("transparent_background"))
+        .map(|value| {
+            value.as_bool().unwrap_or(false)
+                || value
+                    .as_str()
+                    .map(|text| text.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false)
+        })
+        .unwrap_or(false)
+}
+
+/// prompt 尾部换行追加透明提示词；已含任一透明关键字（小写）则不追加（幂等）。
+fn append_transparent_background_hint(prompt: &str) -> String {
+    let trimmed = prompt.trim();
+    if trimmed.is_empty() {
+        return trimmed.to_string();
+    }
+    let normalized = trimmed.to_lowercase();
+    if TRANSPARENT_BACKGROUND_KEYWORDS
+        .iter()
+        .any(|keyword| normalized.contains(keyword))
+    {
+        return trimmed.to_string();
+    }
+    format!("{}\n{}", trimmed, TRANSPARENT_BACKGROUND_PROMPT_HINT)
+}
+
 async fn submit_gpt_image_2_task(
     client: &Client,
     base_url: &str,
     api_key: &str,
     request: &GenerateRequest,
 ) -> Result<String, AIError> {
+    // 批次13：透明底透传（submit_task / generate 两分支共用本函数，改头部一处即可）。
+    // 666api/juyouapi 无原生透明参数 → 提示词式追加；grsai 侧零改动（原生 background 参数）。
+    let prompt = if transparent_background_requested(request) {
+        append_transparent_background_hint(&request.prompt)
+    } else {
+        request.prompt.clone()
+    };
     let images = request.reference_images.as_deref().unwrap_or(&[]);
     let has_reference = !images.is_empty();
 
@@ -1149,7 +1206,7 @@ async fn submit_gpt_image_2_task(
             client,
             &endpoint,
             api_key,
-            &request.prompt,
+            &prompt,
             output_size,
             &png_bytes,
             None,
@@ -1176,7 +1233,7 @@ async fn submit_gpt_image_2_task(
         let resolved_size = resolve_openai_image_size(&request.size, &request.aspect_ratio);
         let body = json!({
             "model": "gpt-image-2",
-            "prompt": request.prompt,
+            "prompt": prompt,
             "n": 1,
             "size": resolved_size
         });
@@ -2126,5 +2183,88 @@ impl AIProvider for Api666Provider {
             "{}/{}",
             self.provider_id, model_name
         )))
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// 单测（批次13）：gpt-image-2 透明底提示词追加 / 幂等 / 假值不加
+// ──────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn request_with_extra(extra: Option<HashMap<String, Value>>) -> GenerateRequest {
+        GenerateRequest {
+            prompt: "一只像素小猫".to_string(),
+            model: "666api/gpt-image-2".to_string(),
+            size: "1K".to_string(),
+            aspect_ratio: "1:1".to_string(),
+            reference_images: None,
+            extra_params: extra,
+        }
+    }
+
+    #[test]
+    fn transparent_bool_true_appends_hint() {
+        let mut extra = HashMap::new();
+        extra.insert("transparent_background".to_string(), Value::Bool(true));
+        let request = request_with_extra(Some(extra));
+        assert!(transparent_background_requested(&request));
+        let prompt = append_transparent_background_hint(&request.prompt);
+        assert!(prompt.starts_with("一只像素小猫\n"));
+        assert!(prompt.contains("背景区域 Alpha 值为 0"));
+    }
+
+    #[test]
+    fn transparent_string_true_appends_hint() {
+        let mut extra = HashMap::new();
+        extra.insert(
+            "transparent_background".to_string(),
+            Value::String("true".to_string()),
+        );
+        let request = request_with_extra(Some(extra));
+        assert!(transparent_background_requested(&request));
+    }
+
+    #[test]
+    fn transparent_falsy_values_do_not_append() {
+        // 假值不加：bool false / 字符串 "false" / 无 extra_params / 无该键
+        let mut extra = HashMap::new();
+        extra.insert("transparent_background".to_string(), Value::Bool(false));
+        assert!(!transparent_background_requested(&request_with_extra(Some(extra))));
+
+        let mut extra = HashMap::new();
+        extra.insert(
+            "transparent_background".to_string(),
+            Value::String("false".to_string()),
+        );
+        assert!(!transparent_background_requested(&request_with_extra(Some(extra))));
+
+        assert!(!transparent_background_requested(&request_with_extra(None)));
+        assert!(!transparent_background_requested(&request_with_extra(Some(HashMap::new()))));
+    }
+
+    #[test]
+    fn hint_append_is_idempotent_on_keywords() {
+        // 幂等：prompt 小写含任一关键字则不追加
+        for keyword in [
+            "已含透明背景要求",
+            "alpha=0 的背景",
+            "需要 alpha通道",
+            "with Alpha Channel please",
+            "TRANSPARENT BACKGROUND required",
+            "background transparent",
+        ] {
+            let result = append_transparent_background_hint(keyword);
+            assert_eq!(result, keyword.trim(), "keyword: {}", keyword);
+        }
+        // 追加一次后再追加不重复
+        let once = append_transparent_background_hint("一只像素小猫");
+        let twice = append_transparent_background_hint(&once);
+        assert_eq!(once, twice);
+        // 空 prompt 原样返回
+        assert_eq!(append_transparent_background_hint("  "), "");
     }
 }

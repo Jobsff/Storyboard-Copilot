@@ -563,15 +563,122 @@ fn set_job_oss_url(app: &AppHandle, job_id: &str, url: &str) -> Result<(), Strin
     Ok(())
 }
 
-// ============================== 公司 OSS 归档（批次11） ==============================
+// ============================== 公司 OSS 归档（批次11 + 补丁2） ==============================
 //
 // 出图成功后自动把结果图上传公司阿里 OSS（全渠道统一一条路，grsai 无快车道），
-// key = `{工程名}/{yyyy-MM}/{job_id}_{provider}_{裸模型名}.{ext}`，拿桶直链永久 URL。
+// key = `{工程名}/{唯一段}_{provider}_{裸模型名}.{ext}`（补丁2 扁平化，唯一段=job_id），
+// 拿桶直链永久 URL。手动补传（archive_image_manual）唯一段=毫秒时间戳。
 //
 // 时机：**update_generation_job 标 succeeded 之前**——finalize_job 随后从 job 行
 // 读 oss_url 一并落入 history 台账，成功轮询的 DTO 首包即带 ossUrl，前端无需补拉。
 // 代价是成功可见时间最多让路上传耗时（HEAD 5s + PUT 60s 封顶，典型 <2s），
 // 且任何失败只 warn 一行直接走终态——软失败铁律：归档绝不影响出图。
+
+/// 下载结果图字节（热修 2026-09-12：裸 http URL 源专用）。单请求 30s 硬上限；
+/// 非 2xx / 下载失败 → warn 一行返回 None（软失败铁律：绝不影响出图）。
+async fn download_result_image(url: &str) -> Option<Vec<u8>> {
+    match crate::ai::http::http_client()
+        .get(url)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+    {
+        Ok(response) => {
+            let status = response.status();
+            if !status.is_success() {
+                tracing::warn!("OSS archive: result URL download failed ({}) for {} — skipped", status, url);
+                return None;
+            }
+            match response.bytes().await {
+                Ok(bytes) => Some(bytes.to_vec()),
+                Err(error) => {
+                    tracing::warn!("OSS archive: result URL body read failed: {} — skipped", error);
+                    None
+                }
+            }
+        }
+        Err(error) => {
+            tracing::warn!("OSS archive: result URL request failed: {} — skipped", error);
+            None
+        }
+    }
+}
+
+/// 本地文件系统绝对路径判定（Windows 盘符 / Unix 斜杠 / UNC）。
+fn is_local_filesystem_path(source: &str) -> bool {
+    if source.starts_with('/') || source.starts_with("\\\\") {
+        return true;
+    }
+    let bytes = source.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+}
+
+/// 解析归档源为 (bytes, ext, content_type)。四种形态（自动归档与手动补传共用，补丁2）：
+/// - `file:media/` 标记 → 读 media 落盘文件（ext 自文件名）；
+/// - 裸 http(s) URL（热修 2026-09-12：grsai 全系渠道返回 URL 结果）→ 下载后魔数嗅探；
+/// - 本地绝对路径（补丁2 手动补传：节点图上传/生成结果都落盘为此形态）→ std::fs::read + 嗅探；
+/// - 内联 dataURL → base64 解码（ext 自 mime）。
+/// 失败返回 None（内部已日志；调用方按场景补 job 上下文）。
+async fn resolve_archive_image_source(
+    app: &AppHandle,
+    source: &str,
+) -> Option<(Vec<u8>, String, String)> {
+    if let Some(marker) = source.strip_prefix(media_store::SPOOL_MARKER_PREFIX) {
+        let (bytes, ext) = match media_store::load_spooled_bytes(app, marker) {
+            Some(pair) => pair,
+            None => {
+                tracing::warn!("OSS archive: media file missing for marker {}", marker);
+                return None;
+            }
+        };
+        return match media_store::ext_to_mime(&ext) {
+            Some(mime) => Some((bytes, ext, mime.to_string())),
+            None => {
+                tracing::debug!("OSS archive: non-image spool ext {}", ext);
+                None
+            }
+        };
+    }
+
+    if source.starts_with("http://") || source.starts_with("https://") {
+        let bytes = download_result_image(source).await?;
+        let (ext, mime) = oss_store::sniff_image(&bytes)?;
+        return Some((bytes, ext.to_string(), mime.to_string()));
+    }
+
+    if is_local_filesystem_path(source) {
+        return match std::fs::read(source) {
+            Ok(bytes) => match oss_store::sniff_image(&bytes) {
+                Some((ext, mime)) => Some((bytes, ext.to_string(), mime.to_string())),
+                None => {
+                    tracing::debug!("OSS archive: local file not a known image: {}", source);
+                    None
+                }
+            },
+            Err(error) => {
+                tracing::debug!("OSS archive: local file unreadable ({}): {}", error, source);
+                None
+            }
+        };
+    }
+
+    match media_store::parse_base64_data_url(source) {
+        Some((mime, bytes)) => match media_store::mime_to_ext(&mime) {
+            Some(ext) => Some((bytes, ext.to_string(), mime)),
+            None => {
+                tracing::debug!("OSS archive: non-image dataURL mime {}", mime);
+                None
+            }
+        },
+        None => {
+            tracing::debug!("OSS archive: source is none of spool/http/local-path/dataURL");
+            None
+        }
+    }
+}
 
 /// 归档结果到公司 OSS；返回桶直链。未配凭据 / 数据缺失 / 上传失败 → None（内部已日志）。
 async fn archive_result_to_oss(
@@ -585,7 +692,7 @@ async fn archive_result_to_oss(
         return None;
     };
 
-    // 元数据自 job 行：provider_id = 实际命中渠道，created_at = 任务创建时刻（yyyy-MM 用），
+    // 元数据自 job 行：provider_id = 实际命中渠道，
     // request_json.oss_project = 前端注入的工程名（重启恢复路径同样可读）。
     let record = match get_generation_job(app, job_id) {
         Ok(Some(record)) => record,
@@ -600,44 +707,16 @@ async fn archive_result_to_oss(
         .and_then(|snapshot| snapshot.oss_project.as_deref())
         .unwrap_or("");
 
-    // 取图片字节 + 扩展名 + content-type：
-    // - `file:media/` 标记 → 读 media 落盘文件（ext 自文件名）；
-    // - 内联 dataURL（≤64KB）→ base64 解码（ext 自 mime）。
-    let (bytes, ext, content_type) = if let Some(marker) =
-        stored.strip_prefix(media_store::SPOOL_MARKER_PREFIX)
-    {
-        match media_store::load_spooled_bytes(app, marker) {
-            Some((bytes, ext)) => match media_store::ext_to_mime(&ext) {
-                Some(mime) => (bytes, ext, mime.to_string()),
-                None => {
-                    tracing::debug!("OSS archive skipped (non-image spool ext {}): job {}", ext, job_id);
-                    return None;
-                }
-            },
-            None => {
-                tracing::warn!("OSS archive skipped (media file missing): job {}", job_id);
-                return None;
-            }
-        }
-    } else {
-        match media_store::parse_base64_data_url(stored) {
-            Some((mime, bytes)) => match media_store::mime_to_ext(&mime) {
-                Some(ext) => (bytes, ext.to_string(), mime),
-                None => {
-                    tracing::debug!("OSS archive skipped (non-image mime {}): job {}", mime, job_id);
-                    return None;
-                }
-            },
-            None => {
-                tracing::debug!("OSS archive skipped (not an image dataURL): job {}", job_id);
-                return None;
-            }
+    let (bytes, ext, content_type) = match resolve_archive_image_source(app, stored).await {
+        Some(triple) => triple,
+        None => {
+            tracing::debug!("OSS archive skipped (unsupported/unreadable source): job {}", job_id);
+            return None;
         }
     };
 
     let key = oss_store::build_object_key(
         project,
-        record.created_at,
         job_id,
         record.provider_id.as_str(),
         model,
@@ -645,12 +724,104 @@ async fn archive_result_to_oss(
     );
     match oss_store::upload_image(&config, &key, &bytes, content_type.as_str()).await {
         Some(url) => {
+            // 伴档（批次12）：画廊卡片简介数据源，取自 job 行 request_json 快照。
+            // 软失败——伴档丢了只是画廊没简介，不影响 oss_url 返回与出图终态。
+            let meta = oss_store::ArchiveSidecarMeta {
+                provider: non_empty_str(&record.provider_id),
+                model: non_empty_str(model),
+                aspect_ratio: snapshot
+                    .as_ref()
+                    .and_then(|s| non_empty_str(&s.aspect_ratio)),
+                size: snapshot.as_ref().and_then(|s| non_empty_str(&s.size)),
+                prompt: snapshot.as_ref().and_then(|s| non_empty_str(&s.prompt)),
+                job_id: Some(job_id),
+                archived_at: now_ms(),
+            };
+            if let Ok(meta_json) = serde_json::to_string(&meta) {
+                let _ = oss_store::upload_meta_sidecar(&config, &key, &meta_json).await;
+            }
             if let Err(error) = set_job_oss_url(app, job_id, &url) {
                 tracing::warn!("OSS archive: failed to persist oss_url for job {}: {}", job_id, error);
             }
             Some(url)
         }
         None => None,
+    }
+}
+
+/// 去首尾空白后非空才参与伴档序列化（空串一律省略字段）。
+fn non_empty_str(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+/// 手动补传归档（补丁2）：图片工具栏「上传归档」按钮，补传历史未归档的图。
+/// 源形态与自动归档共用 resolve_archive_image_source（四种）；无 job_id，
+/// key 唯一段=当前毫秒时间戳，provider 缺省 manual、model 缺省 image（取 `/` 后裸名）。
+/// 返回桶直链；未配凭据 / 源不可读 / 上传失败 → Err 人话中文（前端直接展示）。
+#[tauri::command]
+pub async fn archive_image_manual(
+    app: AppHandle,
+    source: String,
+    oss_project: Option<String>,
+    provider_id: Option<String>,
+    model: Option<String>,
+) -> Result<String, String> {
+    let Some(config) = oss_store::current_config() else {
+        return Err("请先在设置 → 资产归档 填写公司密钥".to_string());
+    };
+    let source = source.trim();
+    if source.is_empty() {
+        return Err("图片源为空，无法归档".to_string());
+    }
+
+    let (bytes, ext, content_type) = resolve_archive_image_source(&app, source)
+        .await
+        .ok_or_else(|| "图片源不可读：本地文件不存在或不是 PNG/JPEG/WebP 图片".to_string())?;
+
+    let project = oss_project.as_deref().map(str::trim).unwrap_or("");
+    let provider = provider_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("manual");
+    let model_name = model
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("image");
+    let key = oss_store::build_object_key(project, &now_ms().to_string(), provider, model_name, ext.as_str());
+
+    match oss_store::upload_image_detail(&config, &key, &bytes, content_type.as_str()).await {
+        Ok(url) => {
+            // 伴档（批次12）：手动补传无 job/请求快照，provider/model 缺省 manual/image，
+            // prompt 等缺省一律省略；软失败不影响归档主结果。
+            let meta = oss_store::ArchiveSidecarMeta {
+                provider: Some(provider),
+                model: Some(model_name),
+                aspect_ratio: None,
+                size: None,
+                prompt: None,
+                job_id: None,
+                archived_at: now_ms(),
+            };
+            if let Ok(meta_json) = serde_json::to_string(&meta) {
+                let _ = oss_store::upload_meta_sidecar(&config, &key, &meta_json).await;
+            }
+            Ok(url)
+        }
+        Err(OssUploadError::Http(status)) => {
+            Err(format!("归档上传失败（OSS 返回 HTTP {status}），请检查密钥与权限"))
+        }
+        Err(OssUploadError::Timeout) => Err("归档上传超时，请检查网络后重试".to_string()),
+        Err(OssUploadError::Network(message)) => Err(format!(
+            "归档上传失败：网络不可达（{}）",
+            chain::truncate_chars(&message, 160)
+        )),
     }
 }
 
@@ -886,6 +1057,22 @@ enum HopSubmitOutcome {
     SubmitFailed(String, ErrorClass),
 }
 
+/// 批次13（R2）：把 hop 级 extra_params_overlay 逐项合并进 request.extra_params
+/// （None→Some(overlay)；Some(map)→insert 各项，hop 覆盖同名键）。两处调用点：
+/// submit_hop_inner（换 hop 重提交）与 submit_generate_image_job 首 hop 直接提交点。
+fn apply_overlay(
+    request: &mut crate::ai::GenerateRequest,
+    overlay: &Option<HashMap<String, Value>>,
+) {
+    let Some(overlay) = overlay else {
+        return; // None 不动
+    };
+    let params = request.extra_params.get_or_insert_with(HashMap::new);
+    for (key, value) in overlay {
+        params.insert(key.clone(), value.clone());
+    }
+}
+
 /// 向指定 hop 提交生成（fail_or_advance 的执行臂；不递归，失败向上抛给主循环迭代）。
 /// 外壳做类型擦除（dyn Future + Send）：打断 submit_hop ↔ fail_or_advance 的
 /// 异步递归 Send 推断环（spawn 闭包 → fail_or_advance → submit_hop → spawn 闭包）。
@@ -920,6 +1107,8 @@ async fn submit_hop_inner(
         );
     };
     request.model = hop.model.clone();
+    // 批次13（R2）：hop 级 overlay（如透明底 transparent_background）合并进 extra_params。
+    apply_overlay(&mut request, &hop.extra_params_overlay);
 
     if provider.supports_task_resume() {
         match provider.submit_task(request).await {
@@ -2082,6 +2271,8 @@ pub async fn submit_generate_image_job(
                 }
             }
             req.model = plan.current_hop().model.clone();
+            // 批次13（R2）：首 hop 直接提交点同样合并 hop 级 overlay（submit_task 之前）。
+            apply_overlay(&mut req, &plan.current_hop().extra_params_overlay);
             chain_meta_to_json(&meta)
         });
 
@@ -2528,4 +2719,82 @@ pub async fn list_generation_history(
 #[tauri::command]
 pub async fn list_models() -> Result<Vec<String>, String> {
     Ok(get_registry().list_models())
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// 单测（批次13）：hop overlay 合并纯逻辑
+// ──────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bare_request() -> crate::ai::GenerateRequest {
+        crate::ai::GenerateRequest {
+            prompt: "a tiny cat".to_string(),
+            model: "auto/gpt-transparent".to_string(),
+            size: "1K".to_string(),
+            aspect_ratio: "1:1".to_string(),
+            reference_images: None,
+            extra_params: None,
+        }
+    }
+
+    fn transparent_overlay() -> Option<HashMap<String, Value>> {
+        let mut overlay = HashMap::new();
+        overlay.insert(
+            "transparent_background".to_string(),
+            Value::Bool(true),
+        );
+        Some(overlay)
+    }
+
+    #[test]
+    fn apply_overlay_none_extra_params_becomes_some() {
+        let mut request = bare_request();
+        apply_overlay(&mut request, &transparent_overlay());
+        let params = request.extra_params.expect("overlay merged");
+        assert_eq!(
+            params.get("transparent_background"),
+            Some(&Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn apply_overlay_merges_into_existing_map_and_overrides_same_key() {
+        let mut request = bare_request();
+        let mut existing = HashMap::new();
+        existing.insert("oss_project".to_string(), Value::String("demo".to_string()));
+        // 同名键被 hop overlay 覆盖（false → true）
+        existing.insert("transparent_background".to_string(), Value::Bool(false));
+        request.extra_params = Some(existing);
+        apply_overlay(&mut request, &transparent_overlay());
+        let params = request.extra_params.expect("overlay merged");
+        assert_eq!(
+            params.get("oss_project"),
+            Some(&Value::String("demo".to_string()))
+        );
+        assert_eq!(
+            params.get("transparent_background"),
+            Some(&Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn apply_overlay_none_overlay_leaves_request_untouched() {
+        let mut request = bare_request();
+        apply_overlay(&mut request, &None);
+        assert!(request.extra_params.is_none());
+
+        let mut existing = HashMap::new();
+        existing.insert("quality".to_string(), Value::String("high".to_string()));
+        request.extra_params = Some(existing);
+        apply_overlay(&mut request, &None);
+        let params = request.extra_params.expect("untouched");
+        assert_eq!(params.len(), 1);
+        assert_eq!(
+            params.get("quality"),
+            Some(&Value::String("high".to_string()))
+        );
+    }
 }

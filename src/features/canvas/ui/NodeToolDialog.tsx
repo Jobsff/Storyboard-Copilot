@@ -23,6 +23,8 @@ import { FormToolEditor } from './tool-editors/FormToolEditor';
 import { CropToolEditor } from './tool-editors/CropToolEditor';
 import { AnnotateToolEditor } from './tool-editors/AnnotateToolEditor';
 import { SplitStoryboardToolEditor } from './tool-editors/SplitStoryboardToolEditor';
+import { MattingToolEditor } from './tool-editors/MattingToolEditor';
+import { AiMattingToolEditor } from './tool-editors/AiMattingToolEditor';
 
 export function NodeToolDialog() {
   const { t } = useTranslation();
@@ -201,6 +203,12 @@ export function NodeToolDialog() {
     if (toolType === NODE_TOOL_TYPES.scale) {
       return t('tool.scale');
     }
+    if (toolType === NODE_TOOL_TYPES.matting) {
+      return t('tool.matting');
+    }
+    if (toolType === NODE_TOOL_TYPES.aiMatting) {
+      return t('tool.aiMatting');
+    }
     return '';
   }, [isSequenceFrameGridOutput, t]);
   const resolveResultNodeTitle = useCallback((toolType: NodeToolType | undefined) => {
@@ -212,6 +220,12 @@ export function NodeToolDialog() {
     }
     if (toolType === NODE_TOOL_TYPES.scale) {
       return t('toolDialog.scaleResultTitle');
+    }
+    if (toolType === NODE_TOOL_TYPES.matting) {
+      return t('toolDialog.mattingResultTitle');
+    }
+    if (toolType === NODE_TOOL_TYPES.aiMatting) {
+      return t('toolDialog.aiMattingResultTitle');
     }
     return EXPORT_RESULT_DISPLAY_NAME.generic;
   }, [t]);
@@ -304,6 +318,12 @@ export function NodeToolDialog() {
     if (activePlugin.editor === 'split') {
       return 'w-[min(1120px,calc(100vw-40px))]';
     }
+    if (activePlugin.editor === 'matting') {
+      return 'w-[min(1120px,calc(100vw-40px))]';
+    }
+    if (activePlugin.editor === 'aiMatting') {
+      return 'w-[min(1120px,calc(100vw-40px))]';
+    }
     return 'w-[min(460px,calc(100vw-40px))]';
   }, [activePlugin]);
 
@@ -345,6 +365,28 @@ export function NodeToolDialog() {
       );
     }
 
+    if (activePlugin.editor === 'matting' && sourceImageUrl) {
+      return (
+        <MattingToolEditor
+          plugin={activePlugin}
+          sourceImageUrl={sourceImageUrl}
+          options={options}
+          onOptionsChange={setOptions}
+        />
+      );
+    }
+
+    if (activePlugin.editor === 'aiMatting' && sourceImageUrl) {
+      return (
+        <AiMattingToolEditor
+          plugin={activePlugin}
+          sourceImageUrl={sourceImageUrl}
+          options={options}
+          onOptionsChange={setOptions}
+        />
+      );
+    }
+
     return (
       <FormToolEditor
         plugin={activePlugin}
@@ -356,6 +398,11 @@ export function NodeToolDialog() {
   }, [activePlugin, options, sourceImageUrl]);
 
   const isOpen = Boolean(activeToolDialog && isSplitImageReady);
+  // 工具可通过 plugin.isApplyEnabled 按 options 禁用应用（如 matting 未取色）。
+  const isApplyDisabled =
+    isProcessing
+    || !sourceImageUrl
+    || (activePlugin?.isApplyEnabled ? !activePlugin.isApplyEnabled(options) : false);
 
   return (
     <UiModal
@@ -368,7 +415,21 @@ export function NodeToolDialog() {
           <UiButton variant="ghost" size="sm" onClick={closeDialog}>
             {t('common.cancel')}
           </UiButton>
-          <UiButton size="sm" variant="primary" onClick={handleApply} disabled={isProcessing || !sourceImageUrl}>
+          <UiButton
+            size="sm"
+            variant="primary"
+            onClick={handleApply}
+            disabled={isApplyDisabled}
+            title={
+              isApplyDisabled && !isProcessing
+              && (activePlugin?.type === NODE_TOOL_TYPES.matting
+                || activePlugin?.type === NODE_TOOL_TYPES.aiMatting)
+                ? activePlugin?.type === NODE_TOOL_TYPES.aiMatting
+                  ? t('aiMatting.pickFirst')
+                  : t('matting.pickFirst')
+                : undefined
+            }
+          >
             {isProcessing ? t('toolDialog.processing') : t('toolDialog.apply')}
           </UiButton>
         </>

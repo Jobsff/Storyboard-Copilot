@@ -1,7 +1,7 @@
 //! 画板生成图片自动上传公司阿里 OSS（批次11 · 全渠道统一一条路）。
 //!
-//! 出图成功后把结果图按 `{工程名}/{yyyy-MM}/{job_id}_{provider}_{裸模型名}.{ext}`
-//! 归档到公司公共读桶，拿到桶直链永久 URL 供复制分享。
+//! 出图成功后把结果图按 `{工程名}/{唯一段}_{provider}_{裸模型名}.{ext}`
+//! 归档到公司公共读桶，拿到桶直链永久 URL 供复制分享（补丁2 扁平化：一层目录）。
 //!
 //! 设计取舍 / 铁律：
 //! - **纯 std 手写 SHA-1 / HMAC-SHA1 / IMF-fixdate HTTP-Date**：红线不新增 crate
@@ -22,6 +22,7 @@ use std::sync::RwLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::STANDARD, Engine};
+use serde::Serialize;
 
 /// 公司桶与 endpoint（主对话 smoke 实证的常量；对象 URL = 桶直链，不走画廊域名——
 /// tu.jyounet.com 非浏览器 UA 会被 Cloudflare 1010 拦，不适合做分享直链）。
@@ -217,11 +218,26 @@ pub fn http_date_now() -> String {
     http_date_from_unix(secs)
 }
 
-/// 任务创建时刻（UTC 毫秒）→ `yyyy-MM`（目录分段）。
+/// Unix 秒 → `yyyy-MM`（批次11 目录分段用；**补丁2 key 扁平化后当前不参与
+/// 命名**，纯函数保留备用）。
 pub fn utc_year_month(created_at_utc_ms: i64) -> String {
     let days = created_at_utc_ms.div_euclid(1_000).div_euclid(86_400);
     let (y, m, _) = civil_from_days(days);
     format!("{:04}-{:02}", y, m)
+}
+
+/// 字节魔数嗅探图片格式（热修 2026-09-12：裸 http URL 结果源下载后定 ext/mime 用，
+/// 不信任 URL 后缀 / Content-Type 头）。返回 (ext, mime)；嗅探不出 → None。
+pub fn sniff_image(bytes: &[u8]) -> Option<(&'static str, &'static str)> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some(("png", "image/png"))
+    } else if bytes.starts_with(b"\xFF\xD8\xFF") {
+        Some(("jpg", "image/jpeg"))
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some(("webp", "image/webp"))
+    } else {
+        None
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -276,27 +292,79 @@ pub fn sanitize_project_name(raw: &str) -> String {
     }
 }
 
-/// 归档对象 key：
-/// `{工程名}/{yyyy-MM}/{job_id}_{provider}_{裸模型名}.{ext}`
-/// 例：`游戏A/2026-09/job-a1b2c3d4_grsai_nano-banana-pro.png`。
+/// 归档对象 key（**补丁2 扁平化**：去掉 yyyy-MM 层，理由=画廊两层目录被用户误解
+/// 为没传上，用户拍板一层直达）：
+/// `{工程名}/{唯一段}_{provider}_{裸模型名}.{ext}`
+/// 自动归档唯一段=job_id，手动补传唯一段=毫秒时间戳。
+/// 例：`游戏A/job-a1b2c3d4_grsai_nano-banana-pro.png`。
 pub fn build_object_key(
     project: &str,
-    created_at_utc_ms: i64,
-    job_id: &str,
+    unique_id: &str,
     provider_id: &str,
     model: &str,
     ext: &str,
 ) -> String {
     let bare_model = model.rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or(model);
     format!(
-        "{}/{}/{}_{}_{}.{}",
+        "{}/{}_{}_{}.{}",
         sanitize_project_name(project),
-        utc_year_month(created_at_utc_ms),
-        job_id,
+        unique_id,
         provider_id,
         bare_model,
         ext
     )
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// 归档伴档 .meta.json（批次12：画廊卡片简介数据源）
+// ──────────────────────────────────────────────────────────────────────
+
+/// 伴档对象 key = 图 key + `.meta.json`（与图同目录同主名）。
+pub fn meta_sidecar_key(image_key: &str) -> String {
+    format!("{image_key}.meta.json")
+}
+
+/// 归档伴档元数据（画廊卡片简介数据源）。字段缺失一律省略（skip_serializing_if），
+/// 绝不写 null——画廊侧按「字段在不在」判断展示。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveSidecarMeta<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aspect_ratio: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<&'a str>,
+    /// 归档时刻（Unix 毫秒）。
+    pub archived_at: i64,
+}
+
+/// 图传成功后追加 PUT 伴档（content-type application/json，复用既有签名 PUT 与
+/// 「URL 编码 / 签名原始」铁律）。伴档也是软失败：失败 warn 一行返回 None——
+/// 伴档丢了只是画廊没简介，绝不影响归档主结果。
+pub async fn upload_meta_sidecar(
+    cfg: &OssConfig,
+    image_key: &str,
+    meta_json: &str,
+) -> Option<String> {
+    let key = meta_sidecar_key(image_key);
+    match upload_image_detail(cfg, &key, meta_json.as_bytes(), "application/json").await {
+        Ok(url) => Some(url),
+        Err(error) => {
+            tracing::warn!(
+                "OSS archive meta sidecar failed: {} ({:?}) — archive result unaffected",
+                key,
+                error
+            );
+            None
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -527,26 +595,91 @@ mod tests {
 
     #[test]
     fn build_object_key_layout() {
-        // 2026-09 的任务（created_at UTC ms）。
+        // 补丁2 扁平化后：一层目录，唯一段=job_id。
         let key = build_object_key(
             "游戏A",
-            1_789_178_400_000,
             "job-a1b2c3d4-e5f6",
             "grsai",
             "grsai/nano-banana-pro",
             "png",
         );
-        assert_eq!(key, "游戏A/2026-09/job-a1b2c3d4-e5f6_grsai_nano-banana-pro.png");
+        assert_eq!(key, "游戏A/job-a1b2c3d4-e5f6_grsai_nano-banana-pro.png");
 
         // 工程名带斜杠 / 空工程兜底 / 无前缀裸模型。
         assert_eq!(
-            build_object_key("a/b", 0, "job", "p", "q/m.png-model", "png"),
-            "a-b/1970-01/job_p_m.png-model.png"
+            build_object_key("a/b", "job", "p", "q/m.png-model", "png"),
+            "a-b/job_p_m.png-model.png"
         );
         assert_eq!(
-            build_object_key("", 0, "job", "p", "m", "webp"),
-            "未分类/1970-01/job_p_m.webp"
+            build_object_key("", "job", "p", "m", "webp"),
+            "未分类/job_p_m.webp"
         );
+
+        // 手动补传形态：唯一段=毫秒时间戳、provider 缺省 manual。
+        assert_eq!(
+            build_object_key("游戏A", "1726100000000", "manual", "image", "jpg"),
+            "游戏A/1726100000000_manual_image.jpg"
+        );
+    }
+
+    // ── 魔数嗅探：PNG/JPEG/WebP 真实魔数 + 纯文本 None ───────────────
+
+    #[test]
+    fn sniff_image_magic_bytes() {
+        // PNG：8 字节签名前缀（其后内容不影响判定）。
+        assert_eq!(sniff_image(b"\x89PNG\r\n\x1a\n"), Some(("png", "image/png")));
+        assert_eq!(
+            sniff_image(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDRfake"),
+            Some(("png", "image/png"))
+        );
+        // JPEG：SOI \xFF\xD8\xFF（JFIF/EXIF 头均以此开头）。
+        assert_eq!(
+            sniff_image(b"\xFF\xD8\xFF\xE0\x00\x10JFIF\x00"),
+            Some(("jpg", "image/jpeg"))
+        );
+        // WebP：RIFF 头 + 偏移 8 处 WEBP（12 字节最小可判）。
+        assert_eq!(
+            sniff_image(b"RIFF\x24\x00\x00\x00WEBPVP8 "),
+            Some(("webp", "image/webp"))
+        );
+        // 纯文本 / 空输入 / 截断的 RIFF → None（debug 跳过归档）。
+        assert_eq!(sniff_image(b"hello plain text, not an image"), None);
+        assert_eq!(sniff_image(b""), None);
+        assert_eq!(sniff_image(b"RIFF\x00\x00"), None);
+    }
+
+    // ── 归档伴档 .meta.json（批次12）────────────────────────────────
+
+    #[test]
+    fn archive_sidecar_meta_skips_missing_fields() {
+        let meta = ArchiveSidecarMeta {
+            provider: Some("grsai"),
+            model: Some("grsai/nano-banana-pro"),
+            aspect_ratio: Some("16:9"),
+            size: Some("2K"),
+            prompt: None,
+            job_id: Some("job-2471"),
+            archived_at: 1_694_000_000_000,
+        };
+        let json = serde_json::to_string(&meta).expect("sidecar meta serializes");
+        assert!(json.contains("\"provider\":\"grsai\""));
+        assert!(json.contains("\"model\":\"grsai/nano-banana-pro\""));
+        assert!(json.contains("\"aspectRatio\":\"16:9\""));
+        assert!(json.contains("\"size\":\"2K\""));
+        assert!(json.contains("\"jobId\":\"job-2471\""));
+        assert!(json.contains("\"archivedAt\":1694000000000"));
+        // 无 prompt → key 整个省略；任何字段都不落 null。
+        assert!(!json.contains("prompt"));
+        assert!(!json.contains("null"));
+    }
+
+    #[test]
+    fn meta_sidecar_key_appends_suffix() {
+        assert_eq!(
+            meta_sidecar_key("游戏A/job-1_grsai_pro.png"),
+            "游戏A/job-1_grsai_pro.png.meta.json"
+        );
+        assert_eq!(meta_sidecar_key("a/b.png"), "a/b.png.meta.json");
     }
 
     // ── 配置态注入 / 清除 ───────────────────────────────────────────

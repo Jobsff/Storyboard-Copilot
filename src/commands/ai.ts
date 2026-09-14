@@ -16,7 +16,8 @@ export interface ExtraHopSpec {
  * extra_hops（批次8，可选）：NEWAPI 接口 / aifast 追加档，缺省空 = 行为与 v0.3.0 一致。
  */
 export interface GenerateFallbackOptions {
-  quality: 'standard' | 'pro';
+  /** 批次13：五档（standard/pro + gpt-standard/gpt-pro/gpt-transparent），与 ImageAutoQuality 对齐。 */
+  quality: 'standard' | 'pro' | 'gpt-standard' | 'gpt-pro' | 'gpt-transparent';
   available_providers: string[];
   extra_hops?: ExtraHopSpec[];
 }
@@ -561,5 +562,27 @@ export async function testOssArchive(accessKey?: string, secretKey?: string): Pr
   return await invoke<string>('test_oss_archive', {
     accessKey: accessKey ?? null,
     secretKey: secretKey ?? null,
+  });
+}
+
+/**
+ * 手动补传归档（补丁2）：把节点图上传公司 OSS，返回桶直链。
+ * source 支持 dataURL / http(s) URL / 本地绝对路径（节点图主流形态）；
+ * 失败 reject 人话中文（未配密钥 / 源不可读 / 403 / 超时 / 网络不可达）。
+ */
+export async function archiveImageManual(params: {
+  source: string;
+  ossProject?: string;
+  providerId?: string;
+  model?: string;
+}): Promise<string> {
+  if (!isTauri()) {
+    throw new Error('当前不是 Tauri 容器环境，请使用 `npm run tauri dev` 启动');
+  }
+  return await invoke<string>('archive_image_manual', {
+    source: params.source,
+    ossProject: params.ossProject ?? null,
+    providerId: params.providerId ?? null,
+    model: params.model ?? null,
   });
 }

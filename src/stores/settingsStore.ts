@@ -17,6 +17,7 @@ import {
   normalizeHexColor,
   normalizeImageGenMode,
   normalizeImageQuality,
+  normalizeAiMattingBaseUrl,
   normalizeOssArchive,
   normalizePriceDisplayCurrencyMode,
   normalizeUsdToCnyRate,
@@ -91,6 +92,8 @@ export interface SettingsState {
   backendSyncErrors: string[];
   /** 公司 OSS 资产归档（v22）：出图后自动上传，密钥仅存 localStorage（前端唯一真源）。 */
   ossArchive: OssArchiveSettings;
+  /** AI 抠图内网服务地址（v23）：SAM-HQ 两段式抠图服务，无鉴权（内网）。 */
+  aiMattingBaseUrl: string;
   setHydrated: (hydrated: boolean) => void;
   setProviderApiKey: (providerId: string, key: string) => void;
   setJuyouapiBaseUrl: (url: string) => void;
@@ -130,6 +133,7 @@ export interface SettingsState {
   setAutoProbeOnLaunch: (enabled: boolean) => void;
   setBackendSyncErrors: (errors: string[]) => void;
   setOssArchive: (patch: Partial<OssArchiveSettings>) => void;
+  setAiMattingBaseUrl: (url: string) => void;
 }
 
 /**
@@ -243,6 +247,7 @@ export const useSettingsStore = create<SettingsState>()(
       autoProbeOnLaunch: true,
       backendSyncErrors: [],
       ossArchive: { enabled: true, accessKey: '', secretKey: '' },
+      aiMattingBaseUrl: 'http://192.168.1.188:8760',
       setHydrated: (hydrated) => set({ isHydrated: hydrated }),
       setProviderApiKey: (providerId, key) =>
         set((state) => ({
@@ -338,10 +343,12 @@ export const useSettingsStore = create<SettingsState>()(
         set((state) => ({
           ossArchive: normalizeOssArchive({ ...state.ossArchive, ...patch }),
         })),
+      setAiMattingBaseUrl: (url) =>
+        set({ aiMattingBaseUrl: normalizeAiMattingBaseUrl(url) }),
     }),
     {
       name: 'settings-storage',
-      version: 22,
+      version: 23,
       onRehydrateStorage: () => {
         return (state, error) => {
           if (error) {

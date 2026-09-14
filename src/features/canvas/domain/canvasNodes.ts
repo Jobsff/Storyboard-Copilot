@@ -59,6 +59,8 @@ export interface NodeImageData extends NodeDisplayData {
 
 export interface UploadImageNodeData extends NodeImageData {
   sourceFileName?: string | null;
+  /** 公司 OSS 归档直链（补丁2）：工具栏「上传归档」手动补传后写回；生成节点的同语义字段在 generationMeta.ossUrl。 */
+  ossArchiveUrl?: string | null;
 }
 
 export type ExportImageNodeResultKind =
@@ -271,6 +273,9 @@ export const NODE_TOOL_TYPES = {
   annotate: 'annotate',
   splitStoryboard: 'split-storyboard',
   scale: 'scale',
+  matting: 'matting',
+  aiMatting: 'ai-matting',
+  aiBirefMatting: 'ai-biref-matting',
 } as const;
 
 export type NodeToolType = (typeof NODE_TOOL_TYPES)[keyof typeof NODE_TOOL_TYPES];

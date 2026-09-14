@@ -50,17 +50,22 @@ export interface ToolExecutionContext {
   ) => Promise<ToolProcessorResult>;
 }
 
-export type ToolIconKey = 'crop' | 'annotate' | 'split' | 'scale';
-export type ToolEditorKind = 'form' | 'crop' | 'annotate' | 'split';
+export type ToolIconKey = 'crop' | 'annotate' | 'split' | 'scale' | 'matting' | 'aiMatting' | 'aiBirefMatting';
+export type ToolEditorKind = 'form' | 'crop' | 'annotate' | 'split' | 'matting' | 'aiMatting';
 
 export interface CanvasToolPlugin {
   type: NodeToolType;
   label: string;
   icon: ToolIconKey;
-  editor: ToolEditorKind;
+  /** 编辑器插槽；immediate 工具（点击即执行，如 AI 去底）无编辑器，省略本字段。 */
+  editor?: ToolEditorKind;
+  /** true = 工具条按钮点击直接执行（loading 转圈，结果落新节点），不开工具对话框。 */
+  immediate?: boolean;
   supportsNode: (node: CanvasNode) => boolean;
   createInitialOptions: (node: CanvasNode) => ToolOptions;
   fields: ToolFieldSchema[];
+  /** 可选：按当前 options 判定是否允许应用（如 matting 未取色时禁用应用按钮）。 */
+  isApplyEnabled?: (options: ToolOptions) => boolean;
   execute: (
     sourceImageUrl: string,
     options: ToolOptions,

@@ -21,15 +21,19 @@
 //! timeout_hint_s 为本批落库的数据字段（hop 级时限参考，批次3 可用于细化 deadline）；
 //! 本批实际超时由批次1的全局治理兜底（http 300s / kie 10min / poll 3 连错 / 15min 总上限）。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::ai::{GenerateRequest, ProviderRegistry};
 
-/// 质量档位（前端"智能出图"两档；gpt-2.5 low~max 透传档不进链）。
+/// 质量档位（前端"智能出图"五档；gpt-2.5 low~max 透传档不进链）。
 pub const QUALITY_STANDARD: &str = "standard";
 pub const QUALITY_PRO: &str = "pro";
+/// 批次13：GPT 系三档（选链优先级高于 i2i 判定，见 build_chain 注释 R6）。
+pub const QUALITY_GPT_STANDARD: &str = "gpt-standard";
+pub const QUALITY_GPT_PRO: &str = "gpt-pro";
+pub const QUALITY_GPT_TRANSPARENT: &str = "gpt-transparent";
 
 /// 链成员静态定义（provider, 完整模型 id, hop 时限提示秒）。
 #[derive(Debug, Clone, PartialEq)]
@@ -37,6 +41,9 @@ pub struct HopSpec {
     pub provider_id: &'static str,
     pub model: &'static str,
     pub timeout_hint_s: u64,
+    /// 批次13：hop 提交时向 request.extra_params 合并 {"transparent_background": true}
+    /// （HashMap 无法 const 构造，用布尔标记、from_spec 时落成 overlay）。
+    pub transparent_overlay: bool,
 }
 
 const fn hop(provider_id: &'static str, model: &'static str, timeout_hint_s: u64) -> HopSpec {
@@ -44,6 +51,17 @@ const fn hop(provider_id: &'static str, model: &'static str, timeout_hint_s: u64
         provider_id,
         model,
         timeout_hint_s,
+        transparent_overlay: false,
+    }
+}
+
+/// 透明底链成员专用构造：hop 级 extra_params overlay 标透明背景。
+const fn hop_transparent(provider_id: &'static str, model: &'static str, timeout_hint_s: u64) -> HopSpec {
+    HopSpec {
+        provider_id,
+        model,
+        timeout_hint_s,
+        transparent_overlay: true,
     }
 }
 
@@ -77,6 +95,22 @@ pub const CHAIN_I2I_STANDARD: &[HopSpec] = &[
     hop("kie", "kie/nano-banana-2", 300),
 ];
 
+/// 批次13 · GPT 标准·高速链：grsai gpt-image-2.5-flare 单档（主对话 smoke 17s 实证恢复）。
+pub const CHAIN_GPT_STANDARD: &[HopSpec] = &[hop("grsai", "grsai/gpt-image-2.5-flare", 300)];
+
+/// 批次13 · GPT 高质量链：grsai gpt-image-2.5-sunburst 单档（smoke 18s 实证）。
+pub const CHAIN_GPT_PRO: &[HopSpec] = &[hop("grsai", "grsai/gpt-image-2.5-sunburst", 300)];
+
+/// 批次13 · GPT 透明底链：grsai gpt-image-2（原生 background=transparent 参数）
+/// → 666api / juyouapi gpt-image-2（提示词式透明兜底，见 api666 submit_gpt_image_2_task）。
+/// 三 hop 均带 transparent overlay（提交时合并 {"transparent_background": true} 进 extra_params；
+/// grsai 侧 request_generate 用 as_bool() 只认 bool，必须 Value::Bool 不是字符串）。
+pub const CHAIN_GPT_TRANSPARENT: &[HopSpec] = &[
+    hop_transparent("grsai", "grsai/gpt-image-2", 300),
+    hop_transparent("666api", "666api/gpt-image-2", 240),
+    hop_transparent("juyouapi", "juyouapi/gpt-image-2", 240),
+];
+
 /// 运行期 hop（chain_meta_json 落库形态的元素）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Hop {
@@ -88,15 +122,32 @@ pub struct Hop {
     /// 用户起的名字而非 newapi_<hash>。serde default 兼容旧落库数据。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// hop 级 extra_params 覆盖（批次13，R1）：提交该 hop 时逐项合并进
+    /// request.extra_params（如透明底链标 {"transparent_background": true}）。
+    /// serde default + skip None，旧 chain_meta_json 兼容（照 display_name 先例）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_params_overlay: Option<HashMap<String, serde_json::Value>>,
 }
 
 impl Hop {
     fn from_spec(spec: &HopSpec) -> Self {
+        let extra_params_overlay = if spec.transparent_overlay {
+            let mut overlay = HashMap::new();
+            // Bool 不是字符串：grsai request_generate 用 value.as_bool() 只认 bool。
+            overlay.insert(
+                "transparent_background".to_string(),
+                serde_json::Value::Bool(true),
+            );
+            Some(overlay)
+        } else {
+            None
+        };
         Self {
             provider_id: spec.provider_id.to_string(),
             model: spec.model.to_string(),
             timeout_hint_s: spec.timeout_hint_s,
             display_name: None,
+            extra_params_overlay,
         }
     }
 
@@ -106,6 +157,7 @@ impl Hop {
             model: spec.model.clone(),
             timeout_hint_s,
             display_name: Some(spec.display_name.clone()),
+            extra_params_overlay: None,
         }
     }
 
@@ -120,6 +172,7 @@ impl Hop {
             model: model.to_string(),
             timeout_hint_s: 0,
             display_name: None,
+            extra_params_overlay: None,
         }
     }
 }
@@ -227,12 +280,16 @@ impl ChainPlan {
     }
 }
 
-/// 收集三条静态链全部成员的裸模型名（去 provider 前缀）——extra hop 同名准入判断用。
+/// 收集全部静态链成员的裸模型名（去 provider 前缀）——extra hop 同名准入判断用。
 pub fn chain_member_bare_model_names() -> HashSet<&'static str> {
     let chains = [
         CHAIN_T2I_STANDARD,
         CHAIN_T2I_PRO,
         CHAIN_I2I_STANDARD,
+        // 批次13（R5）：GPT 系三链成员也纳入同名准入集合。
+        CHAIN_GPT_STANDARD,
+        CHAIN_GPT_PRO,
+        CHAIN_GPT_TRANSPARENT,
     ];
     let mut names = HashSet::new();
     for chain_specs in chains {
@@ -265,19 +322,33 @@ pub fn build_chain(
         .reference_images
         .as_ref()
         .is_some_and(|images| !images.is_empty());
-    let specs: &[HopSpec] = if is_i2i {
-        CHAIN_I2I_STANDARD
-    } else if quality.eq_ignore_ascii_case(QUALITY_PRO) {
-        CHAIN_T2I_PRO
-    } else {
-        CHAIN_T2I_STANDARD
-    };
+    // R6（批次13）选链顺序：GPT 档位判断提到 is_i2i 之前——gpt-standard/pro/transparent
+    // 无论有无参考图都走各自 GPT 链；Gemini 档位（standard/pro）维持现状（i2i→CHAIN_I2I_STANDARD）。
+    let (specs, gpt_chain_selected): (&[HopSpec], bool) =
+        if quality.eq_ignore_ascii_case(QUALITY_GPT_STANDARD) {
+            (CHAIN_GPT_STANDARD, true)
+        } else if quality.eq_ignore_ascii_case(QUALITY_GPT_PRO) {
+            (CHAIN_GPT_PRO, true)
+        } else if quality.eq_ignore_ascii_case(QUALITY_GPT_TRANSPARENT) {
+            (CHAIN_GPT_TRANSPARENT, true)
+        } else if is_i2i {
+            (CHAIN_I2I_STANDARD, false)
+        } else if quality.eq_ignore_ascii_case(QUALITY_PRO) {
+            (CHAIN_T2I_PRO, false)
+        } else {
+            (CHAIN_T2I_STANDARD, false)
+        };
 
     let mut hops: Vec<Hop> = Vec::new();
     let mut seen: HashSet<(String, String)> = HashSet::new();
     for spec in specs {
         // 铁律防御：i2i 永不尝试 grsai gpt 系（慢线，实测不可生产）。
-        if is_i2i && spec.provider_id == "grsai" && spec.model.contains("gpt-image") {
+        // 批次13：该过滤只对 Gemini 链生效——选链结果是 GPT 链时（含参考图也合法）不走此过滤。
+        if !gpt_chain_selected
+            && is_i2i
+            && spec.provider_id == "grsai"
+            && spec.model.contains("gpt-image")
+        {
             continue;
         }
         if registry.get_provider(spec.provider_id).is_none() {
@@ -518,6 +589,7 @@ mod tests {
                 model: format!("{}/model", provider),
                 timeout_hint_s: 0,
                 display_name: None,
+                extra_params_overlay: None,
             })
             .collect()
     }
@@ -905,5 +977,156 @@ mod tests {
     fn parse_chain_meta_none_for_non_chain_job() {
         assert!(parse_chain_meta(None).is_none());
         assert!(parse_chain_meta(Some("not-json")).is_none());
+    }
+
+    // ── 批次13：GPT 系三档链 ────────────────────────────────────────────
+
+    #[test]
+    fn gpt_standard_chain_selected_regardless_of_reference_images() {
+        let registry = registry_with(&["grsai"]);
+        let available = vec!["grsai".to_string()];
+        // t2i
+        let plan = build_chain(
+            &t2i_request("auto/gpt-standard"),
+            QUALITY_GPT_STANDARD,
+            &available,
+            &registry,
+            &[],
+        );
+        assert_eq!(hop_models(&plan), vec!["grsai/gpt-image-2.5-flare"]);
+        // i2i（带参考图）：GPT 档位判断优先于 i2i，仍走 GPT 链而非 CHAIN_I2I_STANDARD
+        let plan = build_chain(
+            &i2i_request("auto/gpt-standard"),
+            QUALITY_GPT_STANDARD,
+            &available,
+            &registry,
+            &[],
+        );
+        assert_eq!(hop_models(&plan), vec!["grsai/gpt-image-2.5-flare"]);
+    }
+
+    #[test]
+    fn gpt_pro_chain_selected_regardless_of_reference_images() {
+        let registry = registry_with(&["grsai"]);
+        let available = vec!["grsai".to_string()];
+        let plan = build_chain(
+            &i2i_request("auto/gpt-pro"),
+            QUALITY_GPT_PRO,
+            &available,
+            &registry,
+            &[],
+        );
+        assert_eq!(hop_models(&plan), vec!["grsai/gpt-image-2.5-sunburst"]);
+    }
+
+    #[test]
+    fn gpt_transparent_chain_with_reference_images_not_killed_by_i2i_filter() {
+        // 单测锁（任务书 R6）：GPT 透明链含参考图不被"i2i 不跑 grsai gpt 系"防御误杀。
+        let registry = registry_with(&["grsai", "666api", "juyouapi"]);
+        let available: Vec<String> = ["grsai", "666api", "juyouapi"]
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        let plan = build_chain(
+            &i2i_request("auto/gpt-transparent"),
+            QUALITY_GPT_TRANSPARENT,
+            &available,
+            &registry,
+            &[],
+        );
+        assert_eq!(
+            hop_models(&plan),
+            vec!["grsai/gpt-image-2", "666api/gpt-image-2", "juyouapi/gpt-image-2"]
+        );
+    }
+
+    #[test]
+    fn gpt_transparent_hops_carry_bool_overlay() {
+        // R1/R4：三 hop 全部带 {"transparent_background": Bool(true)}（Bool 不是字符串）
+        let registry = registry_with(&["grsai", "666api", "juyouapi"]);
+        let available: Vec<String> = ["grsai", "666api", "juyouapi"]
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        let plan = build_chain(
+            &t2i_request("auto/gpt-transparent"),
+            QUALITY_GPT_TRANSPARENT,
+            &available,
+            &registry,
+            &[],
+        );
+        assert_eq!(plan.hops.len(), 3);
+        for hop in &plan.hops {
+            let overlay = hop
+                .extra_params_overlay
+                .as_ref()
+                .expect("transparent hop overlay");
+            assert_eq!(
+                overlay.get("transparent_background"),
+                Some(&serde_json::Value::Bool(true))
+            );
+        }
+        // 非透明链 hop 不带 overlay
+        let plan = build_chain(
+            &t2i_request("auto/standard"),
+            QUALITY_STANDARD,
+            &all_available(),
+            &registry_with(&["grsai", "666api", "juyouapi", "kie"]),
+            &[],
+        );
+        assert!(plan.hops.iter().all(|hop| hop.extra_params_overlay.is_none()));
+    }
+
+    #[test]
+    fn hop_overlay_roundtrips_and_legacy_json_defaults_none() {
+        // overlay 随 chain_meta_json 落库往返；旧数据无该字段 → serde default None
+        let legacy: ChainMeta = serde_json::from_str(
+            r#"{"quality":"gpt-transparent","hops":[{"provider_id":"grsai","model":"grsai/gpt-image-2","timeout_hint_s":300}],"current":0}"#,
+        )
+        .expect("parse legacy chain meta");
+        assert_eq!(legacy.hops[0].extra_params_overlay, None);
+
+        let registry = registry_with(&["grsai", "666api", "juyouapi"]);
+        let available: Vec<String> = ["grsai", "666api", "juyouapi"]
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        let plan = build_chain(
+            &t2i_request("auto/gpt-transparent"),
+            QUALITY_GPT_TRANSPARENT,
+            &available,
+            &registry,
+            &[],
+        );
+        let meta = ChainMeta::from_plan(&plan, QUALITY_GPT_TRANSPARENT, t2i_request("auto/gpt-transparent"));
+        let json = chain_meta_to_json(&meta).expect("serialize");
+        assert!(json.contains("transparent_background"));
+        let parsed = parse_chain_meta(Some(json.as_str())).expect("parse");
+        assert_eq!(parsed.hops, meta.hops);
+    }
+
+    #[test]
+    fn chain_member_names_include_gpt_models() {
+        // R5：三条新链成员裸模型名纳入同名准入集合
+        let names = chain_member_bare_model_names();
+        assert!(names.contains("gpt-image-2"));
+        assert!(names.contains("gpt-image-2.5-flare"));
+        assert!(names.contains("gpt-image-2.5-sunburst"));
+    }
+
+    #[test]
+    fn gemini_i2i_still_skips_grsai_gpt_models() {
+        // 既有铁律不变式锁定：Gemini 档位 i2i 链仍跳过 gpt 系
+        let registry = registry_with(&["grsai", "666api", "juyouapi", "kie"]);
+        for quality in [QUALITY_STANDARD, QUALITY_PRO] {
+            let plan = build_chain(&i2i_request("auto/standard"), quality, &all_available(), &registry, &[]);
+            assert!(
+                plan.hops
+                    .iter()
+                    .all(|hop| !(hop.provider_id == "grsai" && hop.model.contains("gpt-image"))),
+                "quality {} i2i 链混入 grsai gpt 系",
+                quality
+            );
+        }
     }
 }

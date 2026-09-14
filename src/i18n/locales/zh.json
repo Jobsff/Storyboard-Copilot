@@ -47,7 +47,10 @@
     "annotate": "标注",
     "split": "切割",
     "splitAnimation": "切割动画",
-    "scale": "缩放"
+    "scale": "缩放",
+    "matting": "抠图",
+    "aiMatting": "AI 抠图",
+    "aiBirefMatting": "AI 去底"
   },
   "toolDialog": {
     "suffix": "工具",
@@ -57,12 +60,63 @@
     "apply": "应用",
     "cropResultTitle": "裁剪结果",
     "annotateResultTitle": "标注结果",
-    "scaleResultTitle": "缩放结果"
+    "scaleResultTitle": "缩放结果",
+    "mattingResultTitle": "抠图结果",
+    "aiMattingResultTitle": "AI 抠图结果",
+    "aiBirefMattingResultTitle": "AI 去底结果"
+  },
+  "matting": {
+    "hint": "可连续点击多个背景色（最多 4 个），自动抠图",
+    "autoPick": "自动取色",
+    "removeKey": "点击移除该键色",
+    "pickFirst": "请先点击背景取色，再应用抠图"
+  },
+  "aiMatting": {
+    "hint": "左键点主体=保留，右键点=排除，蒙版自动生成",
+    "healthChecking": "正在连接 AI 抠图服务…",
+    "healthOffline": "AI 抠图服务未连接（需接入公司内网）",
+    "retry": "重试",
+    "embedding": "正在分析图片…",
+    "decoding": "正在生成蒙版…",
+    "maskEmpty": "没点在主体上，试点主体中心或多加正点",
+    "decodeFailed": "蒙版生成失败",
+    "embedFailed": "图片分析失败",
+    "positive": "正",
+    "negative": "负",
+    "clearPoints": "清空点选",
+    "modelLabel": "模型",
+    "modelFast": "整体（快）",
+    "modelFine": "细节（HQ）",
+    "modelLarge": "高召回（大模型）",
+    "pickFirst": "先点选主体生成蒙版，再应用抠图",
+    "autoPlace": "自动布点"
+  },
+  "aiBirefMatting": {
+    "buttonTitle": "一键 AI 去底（需内网）",
+    "failed": "AI 去底失败",
+    "offline": "AI 去底服务不可用（需内网且服务端 v1.1+）"
+  },
+  "aiMattingService": {
+    "title": "AI 抠图服务地址",
+    "desc": "SAM-HQ 内网服务的连接地址，改写即时生效",
+    "baseUrlLabel": "服务地址",
+    "baseUrlHint": "仅限公司内网使用，服务无鉴权，勿暴露公网",
+    "test": "测试连接",
+    "testing": "测试中…",
+    "testOk": "连接成功",
+    "testFail": "连接失败"
   },
   "toolFields": {
     "scale": {
       "scalePercent": "缩放百分比"
     }
+  },
+  "gallery": {
+    "title": "巨游资产画廊",
+    "shortTitle": "画廊",
+    "backToWorkspace": "返回工程",
+    "openInBrowser": "在浏览器中打开",
+    "canvas": "画布"
   },
   "nodeToolbar": {
     "reupload": "重新上传",
@@ -83,7 +137,14 @@
     "ungroup": "解散",
     "saveAs": "另存为...",
     "noDownloadPresetPathsHint": "暂无预设路径，请在设置 - 通用中添加",
-    "storyboardLine": "分镜 {{index}}：{{content}}"
+    "storyboardLine": "分镜 {{index}}：{{content}}",
+    "uploadArchive": "上传归档",
+    "uploadArchiveTitle": "上传到公司画廊",
+    "uploadArchiveCopyTitle": "已归档，点击复制链接",
+    "archivedCopied": "已归档",
+    "uploadArchiveFailedTitle": "归档失败",
+    "uploadArchiveFailed": "归档上传失败，请稍后重试",
+    "uploadArchiveSourceMissing": "图片源不可读，无法归档"
   },
   "modelParams": {
     "provider": "供应商",

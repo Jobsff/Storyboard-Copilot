@@ -3,7 +3,7 @@ import { isTauri } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Minus, X, Maximize2, Settings, ArrowLeft } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Moon, Sun, Languages } from 'lucide-react';
+import { Moon, Sun, Languages, Images, LayoutGrid } from 'lucide-react';
 import { useThemeStore } from '@/stores/themeStore';
 import { useProjectStore } from '@/stores/projectStore';
 import closeNormalIcon from '@/assets/macos-traffic-lights/1-close-1-normal.svg';
@@ -23,6 +23,8 @@ export function TitleBar({ onSettingsClick, showBackButton, onBackClick }: Title
   const { t, i18n } = useTranslation();
   const { theme, toggleTheme } = useThemeStore();
   const currentProjectName = useProjectStore((state) => state.currentProject?.name);
+  const currentPage = useProjectStore((state) => state.currentPage);
+  const setCurrentPage = useProjectStore((state) => state.setCurrentPage);
 
   const appWindow = isTauri() ? getCurrentWindow() : null;
   const canControlWindow = Boolean(appWindow);
@@ -145,6 +147,41 @@ export function TitleBar({ onSettingsClick, showBackButton, onBackClick }: Title
         {!isZh && !currentProjectName ? (
           <span className="text-xs text-text-muted ml-2">{t('app.subtitle')}</span>
         ) : null}
+        {/* 画廊/画布切换（批次12）：画廊随时可见；画布仅画廊页显示（高亮，点击返回）。 */}
+        <div className="ml-3 flex items-center gap-1" data-no-drag="true">
+          <button
+            type="button"
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              setCurrentPage('gallery');
+            }}
+            className={`flex h-6 items-center gap-1 rounded px-2 text-xs transition-colors ${
+              currentPage === 'gallery'
+                ? 'bg-accent/15 text-accent'
+                : 'text-text-muted hover:bg-bg-dark hover:text-text-dark'
+            }`}
+            title={t('gallery.title')}
+          >
+            <Images className="h-3.5 w-3.5" />
+            {t('gallery.shortTitle')}
+          </button>
+          {currentPage === 'gallery' && (
+            <button
+              type="button"
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                setCurrentPage('projects');
+              }}
+              className="flex h-6 items-center gap-1 rounded bg-accent/15 px-2 text-xs text-accent transition-colors hover:bg-accent/25"
+              title={t('gallery.canvas')}
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+              {t('gallery.canvas')}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 右侧按钮区域 */}

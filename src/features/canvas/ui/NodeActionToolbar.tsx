@@ -1,9 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { NodeToolbar as ReactFlowNodeToolbar } from '@xyflow/react';
 import {
+  CloudUpload,
   Copy,
   Crop,
   Download,
+  Eraser,
   FolderOpen,
   Info,
   PenLine,
@@ -11,7 +13,9 @@ import {
   Scissors,
   Trash2,
   Unlink2,
+  Wand2,
   ZoomIn,
+  Scan,
 } from 'lucide-react';
 import { save } from '@tauri-apps/plugin-dialog';
 import { useTranslation } from 'react-i18next';
@@ -27,7 +31,9 @@ import {
   type CanvasNode,
   type NodeToolType,
 } from '@/features/canvas/domain/canvasNodes';
-import { canvasEventBus } from '@/features/canvas/application/canvasServices';
+import { canvasEventBus, canvasToolProcessor } from '@/features/canvas/application/canvasServices';
+import { prepareNodeImage } from '@/features/canvas/application/imageData';
+import { EXPORT_RESULT_DISPLAY_NAME } from '@/features/canvas/domain/nodeDisplay';
 import { getNodeToolPlugins } from '@/features/canvas/tools';
 import type { ToolIconKey } from '@/features/canvas/tools';
 import { UiButton, UiChipButton, UiModal, UiPanel } from '@/components/ui';
@@ -36,6 +42,10 @@ import {
   saveImageSourceToDirectory,
   saveImageSourceToPath,
 } from '@/commands/image';
+import { archiveImageManual } from '@/commands/ai';
+import { showErrorDialog, resolveErrorContent } from '@/features/canvas/application/errorDialog';
+import { useProjectStore } from '@/stores/projectStore';
+import { resolveOssProjectParam } from '@/features/canvas/infrastructure/ossProjectName';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useCanvasStore } from '@/stores/canvasStore';
 import { UI_POPOVER_TRANSITION_MS } from '@/components/ui/motion';
@@ -57,6 +67,9 @@ const toolIconMap: Record<ToolIconKey, typeof Crop> = {
   annotate: PenLine,
   split: Scissors,
   scale: ZoomIn,
+  matting: Wand2,
+  aiMatting: Scan,
+  aiBirefMatting: Eraser,
 };
 
 const TOOLBAR_BUTTON_RADIUS_CLASS = 'rounded-full';
@@ -76,6 +89,11 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
   const tools = useMemo(() => getNodeToolPlugins(node), [node]);
   const deleteNode = useCanvasStore((state) => state.deleteNode);
   const ungroupNode = useCanvasStore((state) => state.ungroupNode);
+  const updateNodeData = useCanvasStore((state) => state.updateNodeData);
+  const addDerivedExportNode = useCanvasStore((state) => state.addDerivedExportNode);
+  const addEdge = useCanvasStore((state) => state.addEdge);
+  /** immediate 工具（AI 去底）执行中状态：非空 = 该工具类型正在跑。 */
+  const [immediateToolBusy, setImmediateToolBusy] = useState('');
   const canReupload = isUploadNode(node) && Boolean(node.data.imageUrl);
   const downloadPresetPaths = useSettingsStore((state) => state.downloadPresetPaths);
   const ignoreAtTagWhenCopyingAndGenerating = useSettingsStore(
@@ -91,7 +109,9 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
   const [isCopyTextSuccess, setIsCopyTextSuccess] = useState(false);
   const [isCopyErrorSuccess, setIsCopyErrorSuccess] = useState(false);
   const [isCopyPromptSuccess, setIsCopyPromptSuccess] = useState(false);
+  const [archiveState, setArchiveState] = useState<'idle' | 'loading' | 'success'>('idle');
   const downloadMenuRef = useRef<HTMLDivElement | null>(null);
+  const archiveFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyTextFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyErrorFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -104,6 +124,16 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     return null;
   }, [node]);
   const canHandleImage = Boolean(imageSource);
+  // 手动补传归档（补丁2）：生成/导出图与上传图节点且有图才出按钮；已归档节点点击=复制链接。
+  // ossUrl 存储按节点类型分字段：exportImage 在 generationMeta.ossUrl，upload 在 ossArchiveUrl。
+  const canArchiveImage =
+    (isExportImageNode(node) || isUploadNode(node)) && Boolean(node.data.imageUrl);
+  const generationMeta = isExportImageNode(node) ? node.data.generationMeta ?? null : null;
+  const existingOssUrl = isExportImageNode(node)
+    ? node.data.generationMeta?.ossUrl ?? null
+    : isUploadNode(node)
+      ? node.data.ossArchiveUrl ?? null
+      : null;
   const infoPayload = useMemo(() => {
     const data = node.data as Record<string, unknown>;
     const context = data.generationDebugContext as
@@ -201,8 +231,66 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     if (toolType === NODE_TOOL_TYPES.scale) {
       return t('tool.scale');
     }
+    if (toolType === NODE_TOOL_TYPES.matting) {
+      return t('tool.matting');
+    }
+    if (toolType === NODE_TOOL_TYPES.aiMatting) {
+      return t('tool.aiMatting');
+    }
+    if (toolType === NODE_TOOL_TYPES.aiBirefMatting) {
+      return t('tool.aiBirefMatting');
+    }
     return '';
   }, [isSequenceFrameGridOutput, t]);
+
+  /** immediate 工具（AI 去底）：点击即执行——loading 转圈，结果落新节点+连线，失败弹错误对话框。 */
+  const handleImmediateTool = useCallback(
+    async (toolType: NodeToolType) => {
+      const sourceImageUrl =
+        isUploadNode(node) || isImageEditNode(node) || isExportImageNode(node)
+          ? node.data.imageUrl
+          : null;
+      if (!sourceImageUrl || immediateToolBusy) {
+        return;
+      }
+      setImmediateToolBusy(toolType);
+      try {
+        const result = await canvasToolProcessor.process(toolType, sourceImageUrl, {});
+        if (!result.outputImageUrl) {
+          throw new Error(t('toolDialog.processFailed'));
+        }
+        const prepared = await prepareNodeImage(result.outputImageUrl);
+        const createdNodeId = addDerivedExportNode(
+          node.id,
+          prepared.imageUrl,
+          prepared.aspectRatio,
+          prepared.previewImageUrl,
+          {
+            defaultTitle:
+              toolType === NODE_TOOL_TYPES.aiBirefMatting
+                ? t('toolDialog.aiBirefMattingResultTitle')
+                : EXPORT_RESULT_DISPLAY_NAME.generic,
+            resultKind: 'generic',
+            aspectRatioStrategy: 'provided',
+            sizeStrategy: 'autoMinEdge',
+          }
+        );
+        if (createdNodeId) {
+          addEdge(node.id, createdNodeId);
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : t('toolDialog.processFailed');
+        void showErrorDialog(
+          `${t('aiBirefMatting.failed')}：${message}`,
+          t('tool.aiBirefMatting')
+        );
+      } finally {
+        setImmediateToolBusy('');
+      }
+    },
+    [addDerivedExportNode, addEdge, immediateToolBusy, node, t]
+  );
 
   useEffect(() => {
     if (!downloadMenu) {
@@ -253,6 +341,9 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
       if (copyPromptFeedbackTimerRef.current) {
         clearTimeout(copyPromptFeedbackTimerRef.current);
       }
+      if (archiveFeedbackTimerRef.current) {
+        clearTimeout(archiveFeedbackTimerRef.current);
+      }
       if (downloadMenuCloseTimerRef.current) {
         clearTimeout(downloadMenuCloseTimerRef.current);
       }
@@ -279,6 +370,87 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
       console.error('Failed to copy image to clipboard', error);
     }
   }, [imageSource]);
+
+  // 手动补传归档（补丁2）：未归档 → 解析真实源调 archive_image_manual，成功写回
+  // generationMeta.ossUrl 并自动复制桶直链；已归档 → 直接复制链接（同按钮复用）。
+  const handleArchiveImage = useCallback(async () => {
+    if (!canArchiveImage || archiveState === 'loading') {
+      return;
+    }
+
+    const flashSuccess = () => {
+      setArchiveState('success');
+      if (archiveFeedbackTimerRef.current) {
+        clearTimeout(archiveFeedbackTimerRef.current);
+      }
+      archiveFeedbackTimerRef.current = setTimeout(() => {
+        setArchiveState('idle');
+        archiveFeedbackTimerRef.current = null;
+      }, 1100);
+    };
+
+    if (existingOssUrl) {
+      try {
+        await navigator.clipboard.writeText(existingOssUrl);
+        flashSuccess();
+      } catch (error) {
+        console.error('Failed to copy oss archive url', error);
+      }
+      return;
+    }
+
+    // 内存节点 imageUrl 即真实源（调查实证：__img_ref__ 池化编码只存在于持久化
+    // JSON —— projectStore encode/decodeImageReference 仅在存取 DB 时成对生效，
+    // 内存 Project 类型上无 imagePool 字段）。若真出现 __img_ref__，Rust 侧会
+    // 返回「图片源不可读」人话错误，属可接受的软失败。
+    const source = imageSource;
+    if (!source) {
+      void showErrorDialog(
+        t('nodeToolbar.uploadArchiveSourceMissing'),
+        t('nodeToolbar.uploadArchiveFailedTitle')
+      );
+      return;
+    }
+
+    setArchiveState('loading');
+    try {
+      const url = await archiveImageManual({
+        source,
+        ossProject: resolveOssProjectParam(useProjectStore.getState().currentProject?.name),
+        providerId: generationMeta?.providerId ?? undefined,
+        model: generationMeta?.model ?? undefined,
+      });
+      const nextMeta = { ...(generationMeta ?? {}), ossUrl: url };
+      if (isExportImageNode(node)) {
+        updateNodeData(node.id, { generationMeta: nextMeta });
+      } else {
+        updateNodeData(node.id, { ossArchiveUrl: url });
+      }
+      try {
+        await navigator.clipboard.writeText(url);
+      } catch (copyError) {
+        console.error('Failed to copy archived url', copyError);
+      }
+      flashSuccess();
+    } catch (error) {
+      setArchiveState('idle');
+      const content = resolveErrorContent(error, t('nodeToolbar.uploadArchiveFailed'));
+      void showErrorDialog(
+        content.message,
+        t('nodeToolbar.uploadArchiveFailedTitle'),
+        content.details
+      );
+    }
+  }, [
+    archiveState,
+    canArchiveImage,
+    existingOssUrl,
+    generationMeta,
+    imageSource,
+    node,
+    t,
+    updateNodeData,
+  ]);
 
   const storyboardText = useMemo(() => {
     if (isStoryboardGen) {
@@ -467,6 +639,31 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
         {!isImageEdit && tools.map((tool) => {
           const Icon = toolIconMap[tool.icon] ?? Crop;
 
+          // immediate 工具（AI 去底）：点击即执行，不开工具对话框
+          if (tool.immediate) {
+            const isBusy = immediateToolBusy === tool.type;
+            return (
+              <UiChipButton
+                key={tool.type}
+                className={`h-8 ${TOOLBAR_BUTTON_RADIUS_CLASS} px-2.5 text-xs ${TOOLBAR_NEUTRAL_BUTTON_CLASS}`}
+                disabled={immediateToolBusy !== ''}
+                title={
+                  tool.type === NODE_TOOL_TYPES.aiBirefMatting
+                    ? t('aiBirefMatting.buttonTitle')
+                    : undefined
+                }
+                onClick={() => void handleImmediateTool(tool.type)}
+              >
+                {isBusy ? (
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Icon className="h-3.5 w-3.5" />
+                )}
+                {resolveToolLabel(tool.type)}
+              </UiChipButton>
+            );
+          }
+
           return (
             <UiChipButton
               key={tool.type}
@@ -511,6 +708,35 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
           >
             <Copy className="h-3.5 w-3.5" />
             {t('nodeToolbar.copy')}
+          </UiChipButton>
+        )}
+        {!isImageEdit && canArchiveImage && (
+          <UiChipButton
+            key="image-archive"
+            className={`h-8 ${TOOLBAR_BUTTON_RADIUS_CLASS} px-2.5 text-xs ${TOOLBAR_NEUTRAL_BUTTON_CLASS} ${
+              archiveState === 'success'
+                ? '!border-emerald-400/70 !bg-emerald-500/20 !text-emerald-200 hover:!bg-emerald-500/30'
+                : ''
+            }`}
+            disabled={archiveState === 'loading'}
+            title={
+              existingOssUrl
+                ? t('nodeToolbar.uploadArchiveCopyTitle')
+                : t('nodeToolbar.uploadArchiveTitle')
+            }
+            onClick={(event) => {
+              event.stopPropagation();
+              void handleArchiveImage();
+            }}
+          >
+            {archiveState === 'loading' ? (
+              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <CloudUpload className="h-3.5 w-3.5" />
+            )}
+            {archiveState === 'success'
+              ? t('nodeToolbar.archivedCopied')
+              : t('nodeToolbar.uploadArchive')}
           </UiChipButton>
         )}
         {!isImageEdit && canCopyStoryboardText && (

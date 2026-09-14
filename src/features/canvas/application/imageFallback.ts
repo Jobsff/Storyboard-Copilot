@@ -31,7 +31,26 @@ export interface ImageFallbackOptions {
 /** 降级链渠道清单（顺序即 Rust 侧静态链成员，实际执行顺序由 chain.rs 决定）。批次10：aifast 进 pro 链第二位。 */
 export const CHAIN_PROVIDER_IDS = ['grsai', 'aifast', '666api', 'juyouapi', 'kie'] as const;
 
-/** 内置链成员裸模型名集合（批次8：NEWAPI 接口模型与之完全同名才允许入链）。 */
+/**
+ * 批次13（R3）档位化链渠道：GPT 档位链成员渠道与 Gemini 五渠道全集不同——
+ * gpt-transparent → grsai/666api/juyouapi；gpt-standard/pro → 仅 grsai。
+ * 空链防护按档位求交，交集空 → 返回 null（入口 ai.chainKeyRequired 拦截），绝不发占位 id。
+ */
+export const GPT_TRANSPARENT_CHAIN_PROVIDER_IDS = ['grsai', '666api', 'juyouapi'] as const;
+export const GPT_SINGLE_CHAIN_PROVIDER_IDS = ['grsai'] as const;
+
+/** 按档位取链成员渠道交集域（Gemini 档位维持五渠道全集，行为逐字节不变）。 */
+export function chainProviderIdsForQuality(quality: ImageAutoQuality): readonly string[] {
+  if (quality === 'gpt-transparent') {
+    return GPT_TRANSPARENT_CHAIN_PROVIDER_IDS;
+  }
+  if (quality === 'gpt-standard' || quality === 'gpt-pro') {
+    return GPT_SINGLE_CHAIN_PROVIDER_IDS;
+  }
+  return CHAIN_PROVIDER_IDS;
+}
+
+/** 内置链成员裸模型名集合（批次8：NEWAPI 接口模型与之完全同名才允许入链）。批次13：GPT 系三模型入列。 */
 export const CHAIN_MEMBER_MODEL_NAMES: ReadonlySet<string> = new Set([
   'nano-banana-2', // grsai/kie
   'nano-banana-pro', // grsai（pro 链）
@@ -39,6 +58,9 @@ export const CHAIN_MEMBER_MODEL_NAMES: ReadonlySet<string> = new Set([
   'gemini-3-pro-image', // 666api（pro 链）
   'gemini-3.1-flash-image', // juyouapi
   'gemini-3-pro-image-preview', // aifast（批次10 pro 链）
+  'gpt-image-2', // grsai/666api/juyouapi（批次13 透明链）
+  'gpt-image-2.5-flare', // grsai（批次13 gpt-standard 链）
+  'gpt-image-2.5-sunburst', // grsai（批次13 gpt-pro 链）
 ]);
 
 /** 判断某链渠道是否已配置 key（666api 按 gemini 分组 key 并回退 default）。 */
@@ -236,12 +258,17 @@ export function buildAutoImageFallback(
     aifastJoinChain?: boolean;
   }
 ): ImageFallbackOptions | null {
-  const availableProviders = resolveChainAvailableProviders(apiKeys);
+  const quality = resolveAutoImageQuality(modelId);
+  // R3（批次13）：按档位求交——GPT 档位只认自身链成员渠道；Gemini 档位维持五渠道全集。
+  const allowedProviderIds = new Set(chainProviderIdsForQuality(quality));
+  const availableProviders = resolveChainAvailableProviders(apiKeys).filter((providerId) =>
+    allowedProviderIds.has(providerId)
+  );
   if (availableProviders.length === 0) {
     return null;
   }
   const options: ImageFallbackOptions = {
-    quality: resolveAutoImageQuality(modelId),
+    quality,
     availableProviders,
   };
   if (extraSource) {

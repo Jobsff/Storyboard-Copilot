@@ -130,3 +130,31 @@ describe('settingsMigration · v17 → v18', () => {
     }
   });
 });
+
+describe('settingsMigration · v23（AI 抠图服务地址）', () => {
+  it('老用户缺失 aiMattingBaseUrl 时注入默认内网地址', () => {
+    const migrated = migratePersistedSettings({
+      imageGenMode: 'auto',
+    });
+    expect(migrated.aiMattingBaseUrl).toBe('http://192.168.1.188:8760');
+  });
+
+  it('空白字符串回落默认地址；自定义地址 trim 后保留', () => {
+    const blank = migratePersistedSettings({ aiMattingBaseUrl: '   ' });
+    expect(blank.aiMattingBaseUrl).toBe('http://192.168.1.188:8760');
+
+    const custom = migratePersistedSettings({
+      aiMattingBaseUrl: '  http://10.0.0.8:9000/  ',
+    });
+    expect(custom.aiMattingBaseUrl).toBe('http://10.0.0.8:9000');
+  });
+
+  it('非法类型（数字/对象）回落默认地址', () => {
+    expect(migratePersistedSettings({ aiMattingBaseUrl: 42 }).aiMattingBaseUrl).toBe(
+      'http://192.168.1.188:8760'
+    );
+    expect(
+      migratePersistedSettings({ aiMattingBaseUrl: { url: 1 } }).aiMattingBaseUrl
+    ).toBe('http://192.168.1.188:8760');
+  });
+});

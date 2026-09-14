@@ -3,6 +3,7 @@ import { ReactFlowProvider } from '@xyflow/react';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { Canvas } from './features/canvas/Canvas';
 import { ImageToolPage } from './features/imageTools/ImageToolPage';
+import { GalleryPage } from './features/gallery/GalleryPage';
 import { TitleBar } from './components/TitleBar';
 import { SettingsDialog } from './components/SettingsDialog';
 import { UpdateAvailableDialog, type UpdateIgnoreMode } from './components/UpdateAvailableDialog';
@@ -133,9 +134,11 @@ function App() {
       try {
         const { setOssConfig } = await import('@/commands/ai');
         const { accessKey, secretKey, enabled } = useSettingsStore.getState().ossArchive;
-        const ak = enabled ? accessKey.trim() : '';
-        const sk = enabled ? secretKey.trim() : '';
-        await setOssConfig(ak && sk ? ak : '', sk);
+        const ak = accessKey.trim();
+        const sk = secretKey.trim();
+        // 开关关闭或密钥任一缺失 → 传空清除 Rust 侧配置（enabled 开关语义生效点）。
+        const effective = enabled && ak !== '' && sk !== '';
+        await setOssConfig(effective ? ak : '', effective ? sk : '');
       } catch (error) {
         console.warn('[App] set_oss_config sync failed', error);
       }
@@ -271,9 +274,11 @@ function App() {
             setSettingsInitialCategory('general');
             setShowSettings(true);
           }}
-          showBackButton={!!currentProjectId || currentPage === 'toolbox'}
+          showBackButton={
+            !!currentProjectId || currentPage === 'toolbox' || currentPage === 'gallery'
+          }
           onBackClick={() => {
-            if (currentPage === 'toolbox') {
+            if (currentPage === 'gallery' || currentPage === 'toolbox') {
               setCurrentPage('projects');
             } else {
               closeProject();
@@ -282,7 +287,9 @@ function App() {
         />
 
         <main className="flex-1 relative">
-          {currentPage === 'toolbox' ? (
+          {currentPage === 'gallery' ? (
+            <GalleryPage />
+          ) : currentPage === 'toolbox' ? (
             <ImageToolPage />
           ) : currentProjectId ? (
             <Canvas />

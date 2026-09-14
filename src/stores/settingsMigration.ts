@@ -29,6 +29,18 @@ export interface OssArchiveSettings {
   secretKey: string;
 }
 
+/** AI 抠图内网服务默认地址（批次16）：公司内网 SAM-HQ，无鉴权，勿暴露公网。 */
+export const DEFAULT_AI_MATTING_BASE_URL = 'http://192.168.1.188:8760';
+
+/** v23：AI 抠图服务地址归一化——空白/非法回落默认地址，其余 trim 保留。 */
+export function normalizeAiMattingBaseUrl(input: unknown): string {
+  if (typeof input !== 'string') {
+    return DEFAULT_AI_MATTING_BASE_URL;
+  }
+  const trimmed = input.trim().replace(/\/+$/, '');
+  return trimmed || DEFAULT_AI_MATTING_BASE_URL;
+}
+
 /** v22：ossArchive 归一化——形状非法 / 字段缺失一律回落默认；
  * enabled 语义 = 非**显式 false** 一律默认开（尊重老用户显式关闭）。 */
 export function normalizeOssArchive(input: unknown): OssArchiveSettings {
@@ -203,11 +215,11 @@ export function normalizeCustomEndpoints(input: unknown): CustomEndpoint[] {
 }
 
 /**
- * settings-storage 的 migrate 纯函数（当前 version 22）。
+ * settings-storage 的 migrate 纯函数（当前 version 23）。
  * 语义：老用户已有字段原样保留（含 lastUsedImageModel——不强制迁移到智能出图），
  * 仅对缺失/非法字段补默认值。
  * v20 曾引入 aifastModels（运行时勾选），v21 改静态清单后**读取即丢弃**；
- * aifastJoinChain 保留。v22 新增 ossArchive（公司 OSS 资产归档）。
+ * aifastJoinChain 保留。v22 新增 ossArchive（公司 OSS 资产归档）。v23 新增 aiMattingBaseUrl（AI 抠图内网服务地址）。
  */
 export function migratePersistedSettings(persistedState: unknown): Record<string, unknown> {
   const state = (persistedState ?? {}) as {
@@ -233,6 +245,7 @@ export function migratePersistedSettings(persistedState: unknown): Record<string
     autoProbeOnLaunch?: boolean;
     aifastJoinChain?: boolean;
     ossArchive?: unknown;
+    aiMattingBaseUrl?: string;
   };
 
   const migratedApiKeys = normalizeApiKeys(state.apiKeys);
@@ -273,6 +286,7 @@ export function migratePersistedSettings(persistedState: unknown): Record<string
     backendSyncErrors: [] as string[],
     aifastJoinChain: state.aifastJoinChain === true,
     ossArchive: normalizeOssArchive(state.ossArchive),
+    aiMattingBaseUrl: normalizeAiMattingBaseUrl(state.aiMattingBaseUrl),
   };
 
   /** 已退役字段的剥离表：spread 输入前剔除，防止旧键回流进新 state。 */

@@ -41,6 +41,7 @@ import providerGuideMarkdown from '../../docs/settings/provider-guide.md?raw';
 import type { SettingsCategory } from '@/features/settings/settingsEvents';
 import { GenerationHistoryPanel } from '@/features/settings/GenerationHistoryPanel';
 import { ChannelHealthPanel } from '@/features/settings/ChannelHealthPanel';
+import { AiMattingServicePanel } from '@/features/settings/AiMattingServicePanel';
 import { OssArchivePanel } from '@/features/settings/OssArchivePanel';
 
 interface SettingsDialogProps {
@@ -2000,6 +2001,7 @@ export function SettingsDialog({
                   </p>
                 </div>
                 <OssArchivePanel />
+                <AiMattingServicePanel />
               </>
             )}
 

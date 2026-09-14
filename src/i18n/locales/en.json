@@ -47,7 +47,10 @@
     "annotate": "Annotate",
     "split": "Split",
     "splitAnimation": "Cut Animation",
-    "scale": "Scale"
+    "scale": "Scale",
+    "matting": "Matting",
+    "aiMatting": "AI Matting",
+    "aiBirefMatting": "AI Cutout"
   },
   "toolDialog": {
     "suffix": " Tool",
@@ -57,12 +60,63 @@
     "apply": "Apply",
     "cropResultTitle": "Crop Result",
     "annotateResultTitle": "Annotation Result",
-    "scaleResultTitle": "Scale Result"
+    "scaleResultTitle": "Scale Result",
+    "mattingResultTitle": "Matting Result",
+    "aiMattingResultTitle": "AI Matting Result",
+    "aiBirefMattingResultTitle": "AI Cutout Result"
+  },
+  "matting": {
+    "hint": "Click multiple background colors in a row (up to 4), matting previews automatically",
+    "autoPick": "Auto pick colors",
+    "removeKey": "Click to remove this key color",
+    "pickFirst": "Pick a background color before applying matting"
+  },
+  "aiMatting": {
+    "hint": "Left-click the subject = keep, right-click = exclude, mask generates automatically",
+    "healthChecking": "Connecting to the AI matting service…",
+    "healthOffline": "AI matting service not connected (internal network required)",
+    "retry": "Retry",
+    "embedding": "Analyzing image…",
+    "decoding": "Generating mask…",
+    "maskEmpty": "No subject under the points — try the subject center or add positive points",
+    "decodeFailed": "Mask generation failed",
+    "embedFailed": "Image analysis failed",
+    "positive": "Pos",
+    "negative": "Neg",
+    "clearPoints": "Clear points",
+    "modelLabel": "Model",
+    "modelFast": "Whole (fast)",
+    "modelFine": "Detail (HQ)",
+    "modelLarge": "High-recall (large)",
+    "pickFirst": "Click the subject to generate a mask before applying",
+    "autoPlace": "Auto place points"
+  },
+  "aiBirefMatting": {
+    "buttonTitle": "One-click AI cutout (intranet required)",
+    "failed": "AI cutout failed",
+    "offline": "AI cutout service unavailable (intranet + server v1.1 required)"
+  },
+  "aiMattingService": {
+    "title": "AI matting service URL",
+    "desc": "Endpoint of the internal SAM-HQ matting service, applied immediately",
+    "baseUrlLabel": "Service URL",
+    "baseUrlHint": "Internal network only — the service has no auth, never expose it publicly",
+    "test": "Test connection",
+    "testing": "Testing…",
+    "testOk": "Connected",
+    "testFail": "Connection failed"
   },
   "toolFields": {
     "scale": {
       "scalePercent": "Scale (%)"
     }
+  },
+  "gallery": {
+    "title": "Juyou Asset Gallery",
+    "shortTitle": "Gallery",
+    "backToWorkspace": "Back to workspace",
+    "openInBrowser": "Open in browser",
+    "canvas": "Canvas"
   },
   "nodeToolbar": {
     "reupload": "Reupload",
@@ -83,7 +137,14 @@
     "ungroup": "Ungroup",
     "saveAs": "Save as...",
     "noDownloadPresetPathsHint": "No preset path. Add one in Settings > General.",
-    "storyboardLine": "Storyboard {{index}}: {{content}}"
+    "storyboardLine": "Storyboard {{index}}: {{content}}",
+    "uploadArchive": "Archive",
+    "uploadArchiveTitle": "Upload to company gallery",
+    "uploadArchiveCopyTitle": "Archived — click to copy link",
+    "archivedCopied": "Archived",
+    "uploadArchiveFailedTitle": "Archive failed",
+    "uploadArchiveFailed": "Archive upload failed, please try again later",
+    "uploadArchiveSourceMissing": "Image source is unreadable"
   },
   "modelParams": {
     "provider": "Provider",

@@ -5,6 +5,7 @@ import {
   isUploadNode,
   type CanvasNode,
 } from '../domain/canvasNodes';
+import { readMattingKeyColorsFromOptions } from '../application/matting';
 import { stringifyAnnotationItems } from './annotation';
 import type { CanvasToolPlugin } from './types';
 
@@ -107,9 +108,57 @@ export const scaleToolPlugin: CanvasToolPlugin = {
     await context.processTool(NODE_TOOL_TYPES.scale, sourceImageUrl, options),
 };
 
+export const mattingToolPlugin: CanvasToolPlugin = {
+  type: NODE_TOOL_TYPES.matting,
+  label: '抠图',
+  icon: 'matting',
+  editor: 'matting',
+  supportsNode: (node) => supportsImageSourceNode(node) && Boolean(node.data.imageUrl),
+  // options 形态 `{ keyColors?: RgbTuple[] }`（批次15 多键；兼容旧单键 keyColor）：
+  // 编辑器写入（"r,g,b|r,g,b" 字符串落盘）、execute 读
+  createInitialOptions: () => ({}),
+  fields: [],
+  isApplyEnabled: (options) => readMattingKeyColorsFromOptions(options) !== null,
+  execute: async (sourceImageUrl, options, context) =>
+    await context.processTool(NODE_TOOL_TYPES.matting, sourceImageUrl, options),
+};
+
+export const aiMattingToolPlugin: CanvasToolPlugin = {
+  type: NODE_TOOL_TYPES.aiMatting,
+  label: 'AI 抠图',
+  icon: 'aiMatting',
+  editor: 'aiMatting',
+  supportsNode: (node) => supportsImageSourceNode(node) && Boolean(node.data.imageUrl),
+  // options 形态 `{ aiMattingResultDataUrl?: string }`：编辑器每次 decode 后写入合成结果，
+  // 应用时直接作为产物落新节点（无蒙版时 isApplyEnabled 禁用应用）
+  createInitialOptions: () => ({}),
+  fields: [],
+  isApplyEnabled: (options) =>
+    typeof options.aiMattingResultDataUrl === 'string' &&
+    options.aiMattingResultDataUrl.startsWith('data:image/'),
+  execute: async (sourceImageUrl, options, context) =>
+    await context.processTool(NODE_TOOL_TYPES.aiMatting, sourceImageUrl, options),
+};
+
+export const aiBirefMattingToolPlugin: CanvasToolPlugin = {
+  type: NODE_TOOL_TYPES.aiBirefMatting,
+  label: 'AI 去底',
+  icon: 'aiBirefMatting',
+  // 零交互工具：无编辑器插槽，工具条点击即执行（immediate），结果直接落新节点
+  immediate: true,
+  supportsNode: (node) => supportsImageSourceNode(node) && Boolean(node.data.imageUrl),
+  createInitialOptions: () => ({}),
+  fields: [],
+  execute: async (sourceImageUrl, options, context) =>
+    await context.processTool(NODE_TOOL_TYPES.aiBirefMatting, sourceImageUrl, options),
+};
+
 export const builtInToolPlugins: CanvasToolPlugin[] = [
   cropToolPlugin,
   annotateToolPlugin,
   splitStoryboardToolPlugin,
   scaleToolPlugin,
+  mattingToolPlugin,
+  aiMattingToolPlugin,
+  aiBirefMattingToolPlugin,
 ];
