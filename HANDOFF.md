@@ -799,3 +799,39 @@ decode 后链路升级为：**fillMaskHoles → upsampleMaskGuided → featherMa
 | `src/i18n/locales/zh.json` / `en.json` | aiMatting.modelLarge；tool.aiBirefMatting / toolDialog.aiBirefMattingResultTitle / aiBirefMatting.* |
 | `src/features/canvas/application/__tests__/aiMatting.test.ts` | +7 单测（luminance/模型自适应/尺寸透传/上传尺寸） |
 | `src/features/canvas/tools/__tests__/aiBirefMattingTool.test.ts` | 新增：5 单测（注册/immediate 形态/supportsNode/排序/execute 透传） |
+
+## 批次16c · AI 抠图负点改「橡皮擦硬清除」+ 下线 vit_b 细节档（2026-09-14）
+
+> 用户真机反馈两项：① 右键负点「没感觉出有啥用，背景照样没被清除」；② vit_b（细节 HQ）点击漂移、无用处，裁决取消。纯前端，Rust 零改动，未 commit。
+
+### 根因实证（内网 v1.1 服务 curl A/B，勿重复调查）
+
+- **SAM 负点是软约束且在本场景失效**：合成透明 sprite 图（服务端白底合成后）实测——单正点蒙版 **94.4% 全图前景**（白底图上 SAM 把整图圈成一个物件）；加 1 负点仅 94.4%→93.7%，**负点位置仍是前景**；普通照片图同理（99.8%→99.85% 几乎零变化）。负点加多后蒙版**不可控崩塌**（2 负点 → 2.4%）。中间不存在平稳可用区间——「右键排除」在服务端协议层就不成立。
+- **vit_b 漂移**：API 文档二节早有实测（同一点 vit_t 覆盖 63%、vit_b 只圈 0.3% 局部），用户感知即「漂移/没用」。
+- **连带发现 busy 竞争 bug**：点变更 effect 在 `busy !== ''` 时直接 return 且依赖数组无 busy——decode 进行中点的新点被静默丢弃、事后不补发。
+
+### 修复（负点语义改为客户端硬清除）
+
+1. **负点不再传服务端 decode**（`runDecode` 过滤 `label===1`）——正点驱动 SAM 蒙版保持稳定，负点从「无效的软提示」变为「确定性的橡皮擦」。
+2. **`applyNegativeClears`（aiMatting.ts 新纯函数）**：最终 alpha 上以每个负点为圆心强制清除，半径 `negativeClearRadius` = 对角线 5%、下限 24px；0.7r 内清零、0.7r~r 线性渐变边。点哪清哪，可预测、绝不影响蒙版其余部分。
+3. **编辑器重构**：decode 成功的服务端原生蒙版缓存进 `serverMaskRef`——**仅负点变化时走本地重合成（免网络、即时响应）**；正点/embedId 变化才重新 decode。
+4. **busy 竞争修复**：effect 依赖加 `busy`（busy 结束自动补跑）；`lastAttemptSigRef` 记「已发起」签名（decode 失败不死循环）；`lastDecodedPositiveSigRef` 区分「正点变了→decode」与「仅负点变了→本地重合成」；`handleClearPoints` 重置三 ref。runEmbed 删显式 runDecode（统一由点变更 effect 驱动，消重复请求）。
+5. **画布可见性**：负点位置绘制红色半透明清除圈（与 `applyNegativeClears` 同半径口径），「点哪清哪」所见即所得。
+6. **下线 vit_b**：`FALLBACK_MODELS=['vit_t']`；`resolveAvailableModels` 过滤 `RETIRED_MODELS=['vit_b']`（vit_l 等新档自动出现）；`modelDisplayName` 删 case；i18n 删 `aiMatting.modelFine`（zh/en）。Rust 白名单与服务端不动（服务端仍支持，仅前端无入口）。
+7. **i18n hint 更新**（zh/en）：「右键点=橡皮擦强制清除该处」。
+
+### 验证
+
+- `npx tsc --noEmit` 0 错；`npm run build` 0 错（check-bundle ✓）；`npm test` **139 过**（基线 136 + 负点清除 3，模型自适应 3 用例改写）
+- **真实服务端到端**（node 直跑 aiMatting.ts，type-stripping）：sprite 合成图 embed → decode 只发正点 → fillMaskHoles → guided → feather → applyNegativeClears——阴影中心负点 255→0、空白区负点 255→0、sprite 主体保持 255、圈外保持；diff 目视圆形渐变边正确
+- Rust 零改动（未跑 cargo）；未 commit/push
+- 未验证（需真机）：应用内右键清除的实际手感（半径 5% 对角线是否合适，后续可调 `negativeClearRadius`）
+
+### 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `src/features/canvas/application/aiMatting.ts` | `negativeClearRadius`/`applyNegativeClears` 新增；FALLBACK_MODELS 缩为 ['vit_t']；resolveAvailableModels 过滤 RETIRED_MODELS |
+| `src/features/canvas/ui/tool-editors/AiMattingToolEditor.tsx` | runDecode 只发正点 + serverMaskRef 缓存；postProcess 抽出（负点本地重合成）；点变更 effect 重写（busy 补跑 + 双 sig 去重）；runEmbed 删显式 decode；画布负点清除圈（Circle）；modelDisplayName 删 vit_b |
+| `src/features/canvas/application/__tests__/aiMatting.test.ts` | 模型自适应 3 用例改写（vit_b 过滤）；+3 负点清除用例（半径口径/三区段清除/多点叠加） |
+| `src/i18n/locales/zh.json` / `en.json` | aiMatting.hint 语义更新；删 modelFine |

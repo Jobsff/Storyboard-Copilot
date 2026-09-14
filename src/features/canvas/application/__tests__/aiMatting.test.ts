@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  applyNegativeClears,
   appendPoint,
   clearPoints,
   decodeMaskWithRecovery,
   featherMask,
   maskForegroundRatio,
+  negativeClearRadius,
   pickEffectiveModel,
   pointsToTriples,
   removePointAt,
@@ -261,22 +263,61 @@ describe('服务端升级兼容：蒙版灰度通道解析（luminance）', () =
 });
 
 describe('服务端升级兼容：模型档自适应（health.models 驱动）', () => {
-  it('models 缺失/为空时兜底 [vit_t, vit_b]（旧服务零变化）', () => {
-    expect(resolveAvailableModels(undefined)).toEqual(['vit_t', 'vit_b']);
-    expect(resolveAvailableModels([])).toEqual(['vit_t', 'vit_b']);
+  it('models 缺失/为空时兜底 [vit_t]（vit_b 已下线）', () => {
+    expect(resolveAvailableModels(undefined)).toEqual(['vit_t']);
+    expect(resolveAvailableModels([])).toEqual(['vit_t']);
   });
 
-  it('旧服务两档原样透传；新服务 vit_l 档自动出现', () => {
-    expect(resolveAvailableModels(['vit_t', 'vit_b'])).toEqual(['vit_t', 'vit_b']);
-    expect(resolveAvailableModels(['vit_t', 'vit_b', 'vit_l'])).toEqual(['vit_t', 'vit_b', 'vit_l']);
+  it('vit_b（细节 HQ）一律过滤下线；vit_l 等新档自动出现', () => {
+    expect(resolveAvailableModels(['vit_t', 'vit_b'])).toEqual(['vit_t']);
+    expect(resolveAvailableModels(['vit_t', 'vit_b', 'vit_l'])).toEqual(['vit_t', 'vit_l']);
   });
 
   it('当前档仍可用则保持；服务端下线当前档时落到可用档首项', () => {
-    expect(pickEffectiveModel('vit_b', ['vit_t', 'vit_b', 'vit_l'])).toBe('vit_b');
+    expect(pickEffectiveModel('vit_t', ['vit_t', 'vit_l'])).toBe('vit_t');
+    expect(pickEffectiveModel('vit_l', ['vit_t', 'vit_l'])).toBe('vit_l');
     expect(pickEffectiveModel('vit_b', ['vit_t', 'vit_l'])).toBe('vit_t');
-    expect(pickEffectiveModel('vit_t', ['vit_t', 'vit_b'])).toBe('vit_t');
     // 可用列表为空（防御）时保持当前档
     expect(pickEffectiveModel('vit_t', [])).toBe('vit_t');
+  });
+});
+
+describe('批次16c：负点硬清除（橡皮擦语义，applyNegativeClears）', () => {
+  it('negativeClearRadius = 对角线 5%，下限 24px，非法尺寸兜底 24', () => {
+    expect(negativeClearRadius(1024, 1024)).toBe(72); // hypot≈1448 → 72
+    expect(negativeClearRadius(768, 1376)).toBe(79); // hypot≈1578 → 79
+    expect(negativeClearRadius(200, 200)).toBe(24); // 283*0.05≈14 → 下限
+    expect(negativeClearRadius(0, 100)).toBe(24);
+  });
+
+  it('负点 0.7r 内全清、圈外原样、过渡带部分清除', () => {
+    const size = 1024;
+    const alpha = new Uint8Array(size * size).fill(255);
+    const out = applyNegativeClears(alpha, size, size, [{ x: 400, y: 400, label: 0 }]);
+    const at = (x: number, y: number) => out[y * size + x];
+    expect(at(400, 400)).toBe(0); // 圆心
+    expect(at(400 + 30, 400)).toBe(0); // 0.7r=50.4 内
+    expect(at(400 + 100, 400)).toBe(255); // d=100 > r=72 圈外
+    const edge = at(400 + 62, 400); // d=62 ∈ (50.4, 72) 过渡带
+    expect(edge).toBeGreaterThan(0);
+    expect(edge).toBeLessThan(255);
+    // 正点不影响
+    const onlyPositive = applyNegativeClears(alpha, size, size, [{ x: 400, y: 400, label: 1 }]);
+    expect(onlyPositive[400 * size + 400]).toBe(255);
+  });
+
+  it('多负点叠加清除（取各圆交集最小），无负点原样副本', () => {
+    const size = 400;
+    const alpha = new Uint8Array(size * size).fill(200);
+    const two = applyNegativeClears(alpha, size, size, [
+      { x: 100, y: 100, label: 0 },
+      { x: 300, y: 300, label: 0 },
+    ]);
+    expect(two[100 * size + 100]).toBe(0);
+    expect(two[300 * size + 300]).toBe(0);
+    expect(two[0]).toBe(200); // 左上角在两圈之外
+    const none = applyNegativeClears(alpha, size, size, []);
+    expect(Array.from(none)).toEqual(Array.from(alpha));
   });
 });
 

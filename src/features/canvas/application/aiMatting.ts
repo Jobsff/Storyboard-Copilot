@@ -30,18 +30,26 @@ export function resolveSamUploadSize(
   };
 }
 
-/** 编辑器默认模型档（health.models 缺失/为空时的兜底，对齐旧服务行为）。 */
-export const FALLBACK_MODELS: AiMattingModel[] = ['vit_t', 'vit_b'];
+/**
+ * 编辑器默认模型档（health.models 缺失/为空时的兜底）。
+ * vit_b 已下线（见 resolveAvailableModels），兜底只剩 vit_t。
+ */
+export const FALLBACK_MODELS: AiMattingModel[] = ['vit_t'];
 
 /**
- * health.models → 编辑器可用模型档：空/缺失兜底 ['vit_t','vit_b']（旧服务零变化）；
- * 非空时原样采用（服务端升级后含 vit_l 等新档自动出现）。
+ * 下线档：vit_b（细节 HQ）在真实样图上点击漂移、只圈极小局部
+ * （API 文档二节实测：同一点 vit_t 覆盖 63% 画面、vit_b 只圈 0.3%），
+ * 2026-09-14 用户裁决下线。服务端仍支持（Rust 白名单保留），仅前端不出入口。
+ */
+const RETIRED_MODELS: readonly string[] = ['vit_b'];
+
+/**
+ * health.models → 编辑器可用模型档：空/缺失兜底 vit_t；非空时过滤下线档
+ * （vit_b 不再出现；vit_l 等新档自动出现）。
  */
 export function resolveAvailableModels(models: readonly string[] | undefined): AiMattingModel[] {
-  if (!models || models.length === 0) {
-    return [...FALLBACK_MODELS];
-  }
-  return [...models];
+  const base = !models || models.length === 0 ? [...FALLBACK_MODELS] : [...models];
+  return base.filter((model) => !RETIRED_MODELS.includes(model));
 }
 
 /**
@@ -453,6 +461,62 @@ export function upsampleMaskGuided(
     return upsampleMaskBilinear(filtered255, workWidth, workHeight, guideWidth, guideHeight);
   }
   return filtered255;
+}
+
+/**
+ * 负点硬清除半径（原图域像素）：图像对角线的 5%，下限 24px。
+ * 与画布上绘制的清除圈半径共用同一口径。
+ */
+export function negativeClearRadius(width: number, height: number): number {
+  if (width <= 0 || height <= 0) {
+    return 24;
+  }
+  return Math.max(24, Math.round(Math.hypot(width, height) * 0.05));
+}
+
+const NEGATIVE_CLEAR_INNER_RATIO = 0.7;
+
+/**
+ * 负点硬清除（批次16c）：SAM 的负点是软约束，实测在白底/透明底 sprite 上几乎无效
+ * （单正点蒙版 94.4% 前景，加负点仅 93.7%，负点位置仍是前景），点多了蒙版还会整体崩塌
+ * ——故负点不再传服务端 decode，改为在最终 alpha 上以负点为圆心强制清除：
+ * 0.7r 内清零、0.7r~r 线性过渡。语义 = 橡皮擦：点哪清哪，可预测、不影响蒙版其余部分。
+ */
+export function applyNegativeClears(
+  alpha: Uint8Array,
+  width: number,
+  height: number,
+  points: readonly AiMattingPoint[]
+): Uint8Array {
+  const out = new Uint8Array(alpha);
+  if (width <= 0 || height <= 0 || out.length !== width * height) {
+    return out;
+  }
+  const radius = negativeClearRadius(width, height);
+  const inner = NEGATIVE_CLEAR_INNER_RATIO * radius;
+  for (const point of points) {
+    if (point.label !== 0) {
+      continue;
+    }
+    const cx = clamp(point.x, 0, width - 1);
+    const cy = clamp(point.y, 0, height - 1);
+    const x0 = Math.max(0, Math.floor(cx - radius));
+    const x1 = Math.min(width - 1, Math.ceil(cx + radius));
+    const y0 = Math.max(0, Math.floor(cy - radius));
+    const y1 = Math.min(height - 1, Math.ceil(cy + radius));
+    for (let y = y0; y <= y1; y += 1) {
+      for (let x = x0; x <= x1; x += 1) {
+        const d = Math.hypot(x - cx, y - cy);
+        if (d >= radius) {
+          continue;
+        }
+        const factor = d <= inner ? 0 : (d - inner) / (radius - inner);
+        const index = y * width + x;
+        out[index] = Math.round(out[index] * factor);
+      }
+    }
+  }
+  return out;
 }
 
 /**

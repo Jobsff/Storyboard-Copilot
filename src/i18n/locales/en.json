@@ -72,7 +72,7 @@
     "pickFirst": "Pick a background color before applying matting"
   },
   "aiMatting": {
-    "hint": "Left-click the subject = keep, right-click = exclude, mask generates automatically",
+    "hint": "Left-click the subject = keep, right-click = eraser that force-clears the spot, mask generates automatically",
     "healthChecking": "Connecting to the AI matting service…",
     "healthOffline": "AI matting service not connected (internal network required)",
     "retry": "Retry",
@@ -86,10 +86,13 @@
     "clearPoints": "Clear points",
     "modelLabel": "Model",
     "modelFast": "Whole (fast)",
-    "modelFine": "Detail (HQ)",
     "modelLarge": "High-recall (large)",
     "pickFirst": "Click the subject to generate a mask before applying",
-    "autoPlace": "Auto place points"
+    "autoPlace": "Auto place points",
+    "originalLabel": "Original · click points",
+    "previewLabel": "Cutout preview",
+    "previewEmpty": "Pick the subject and the cutout appears here",
+    "resetView": "Reset view"
   },
   "aiBirefMatting": {
     "buttonTitle": "One-click AI cutout (intranet required)",
@@ -120,7 +123,6 @@
   },
   "nodeToolbar": {
     "reupload": "Reupload",
-    "copy": "Copy",
     "copyPrompt": "Copy prompt",
     "info": "Info",
     "infoTitle": "Image Info",

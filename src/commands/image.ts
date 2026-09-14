@@ -191,7 +191,3 @@ export async function saveImageSourceToAppDebugDir(
     suggestedFileName,
   });
 }
-
-export async function copyImageSourceToClipboard(source: string): Promise<void> {
-  await invoke('copy_image_source_to_clipboard', { source });
-}

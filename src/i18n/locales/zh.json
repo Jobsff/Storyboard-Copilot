@@ -72,7 +72,7 @@
     "pickFirst": "请先点击背景取色，再应用抠图"
   },
   "aiMatting": {
-    "hint": "左键点主体=保留，右键点=排除，蒙版自动生成",
+    "hint": "左键点主体=保留，右键点=橡皮擦强制清除该处，蒙版自动生成",
     "healthChecking": "正在连接 AI 抠图服务…",
     "healthOffline": "AI 抠图服务未连接（需接入公司内网）",
     "retry": "重试",
@@ -86,10 +86,13 @@
     "clearPoints": "清空点选",
     "modelLabel": "模型",
     "modelFast": "整体（快）",
-    "modelFine": "细节（HQ）",
     "modelLarge": "高召回（大模型）",
     "pickFirst": "先点选主体生成蒙版，再应用抠图",
-    "autoPlace": "自动布点"
+    "autoPlace": "自动布点",
+    "originalLabel": "原图 · 点选",
+    "previewLabel": "抠图预览",
+    "previewEmpty": "点选主体后此处显示抠图效果",
+    "resetView": "复位视图"
   },
   "aiBirefMatting": {
     "buttonTitle": "一键 AI 去底（需内网）",
@@ -120,7 +123,6 @@
   },
   "nodeToolbar": {
     "reupload": "重新上传",
-    "copy": "复制",
     "copyPrompt": "复制提示词",
     "info": "简介",
     "infoTitle": "图片简介",

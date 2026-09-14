@@ -38,7 +38,6 @@ import { getNodeToolPlugins } from '@/features/canvas/tools';
 import type { ToolIconKey } from '@/features/canvas/tools';
 import { UiButton, UiChipButton, UiModal, UiPanel } from '@/components/ui';
 import {
-  copyImageSourceToClipboard,
   saveImageSourceToDirectory,
   saveImageSourceToPath,
 } from '@/commands/image';
@@ -75,6 +74,12 @@ const toolIconMap: Record<ToolIconKey, typeof Crop> = {
 const TOOLBAR_BUTTON_RADIUS_CLASS = 'rounded-full';
 const TOOLBAR_NEUTRAL_BUTTON_CLASS =
   'border-[rgba(255,255,255,0.18)] bg-bg-dark/70 text-text-dark hover:border-[rgba(255,255,255,0.32)] hover:bg-bg-dark';
+/** 工具条第二行核心工具：裁剪 / AI 抠图 / AI 去底；其余插件工具与常驻按钮在首行。 */
+const CORE_TOOL_IDS: NodeToolType[] = [
+  NODE_TOOL_TYPES.crop,
+  NODE_TOOL_TYPES.aiMatting,
+  NODE_TOOL_TYPES.aiBirefMatting,
+];
 
 export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
   const { t, i18n } = useTranslation();
@@ -87,6 +92,14 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     Boolean(node.data.imageUrl);
   const canCopyStoryboardText = isStoryboardGen || isStoryboardSplit;
   const tools = useMemo(() => getNodeToolPlugins(node), [node]);
+  const coreTools = useMemo(
+    () => tools.filter((tool) => CORE_TOOL_IDS.includes(tool.type)),
+    [tools]
+  );
+  const otherTools = useMemo(
+    () => tools.filter((tool) => !CORE_TOOL_IDS.includes(tool.type)),
+    [tools]
+  );
   const deleteNode = useCanvasStore((state) => state.deleteNode);
   const ungroupNode = useCanvasStore((state) => state.ungroupNode);
   const updateNodeData = useCanvasStore((state) => state.updateNodeData);
@@ -105,14 +118,12 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
   const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(
     null
   );
-  const [isCopySuccess, setIsCopySuccess] = useState(false);
   const [isCopyTextSuccess, setIsCopyTextSuccess] = useState(false);
   const [isCopyErrorSuccess, setIsCopyErrorSuccess] = useState(false);
   const [isCopyPromptSuccess, setIsCopyPromptSuccess] = useState(false);
   const [archiveState, setArchiveState] = useState<'idle' | 'loading' | 'success'>('idle');
   const downloadMenuRef = useRef<HTMLDivElement | null>(null);
   const archiveFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyTextFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyErrorFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyPromptFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -329,9 +340,6 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
 
   useEffect(() => {
     return () => {
-      if (copyFeedbackTimerRef.current) {
-        clearTimeout(copyFeedbackTimerRef.current);
-      }
       if (copyTextFeedbackTimerRef.current) {
         clearTimeout(copyTextFeedbackTimerRef.current);
       }
@@ -349,27 +357,6 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
       }
     };
   }, []);
-
-  const handleCopyImage = useCallback(async () => {
-    if (!imageSource) {
-      return;
-    }
-
-    setIsCopySuccess(true);
-    if (copyFeedbackTimerRef.current) {
-      clearTimeout(copyFeedbackTimerRef.current);
-    }
-    copyFeedbackTimerRef.current = setTimeout(() => {
-      setIsCopySuccess(false);
-      copyFeedbackTimerRef.current = null;
-    }, 1100);
-
-    try {
-      await copyImageSourceToClipboard(imageSource);
-    } catch (error) {
-      console.error('Failed to copy image to clipboard', error);
-    }
-  }, [imageSource]);
 
   // 手动补传归档（补丁2）：未归档 → 解析真实源调 archive_image_manual，成功写回
   // generationMeta.ossUrl 并自动复制桶直链；已归档 → 直接复制链接（同按钮复用）。
@@ -626,6 +613,52 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
     [closeDownloadMenu, imageSource, node.id]
   );
 
+  /** 工具插件按钮渲染：immediate 工具（AI 去底）点击即执行，其余发布 tool-dialog/open。 */
+  const renderToolButton = (tool: ReturnType<typeof getNodeToolPlugins>[number]) => {
+    const Icon = toolIconMap[tool.icon] ?? Crop;
+
+    // immediate 工具（AI 去底）：点击即执行，不开工具对话框
+    if (tool.immediate) {
+      const isBusy = immediateToolBusy === tool.type;
+      return (
+        <UiChipButton
+          key={tool.type}
+          className={`h-8 ${TOOLBAR_BUTTON_RADIUS_CLASS} px-2.5 text-xs ${TOOLBAR_NEUTRAL_BUTTON_CLASS}`}
+          disabled={immediateToolBusy !== ''}
+          title={
+            tool.type === NODE_TOOL_TYPES.aiBirefMatting
+              ? t('aiBirefMatting.buttonTitle')
+              : undefined
+          }
+          onClick={() => void handleImmediateTool(tool.type)}
+        >
+          {isBusy ? (
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Icon className="h-3.5 w-3.5" />
+          )}
+          {resolveToolLabel(tool.type)}
+        </UiChipButton>
+      );
+    }
+
+    return (
+      <UiChipButton
+        key={tool.type}
+        className={`h-8 ${TOOLBAR_BUTTON_RADIUS_CLASS} px-2.5 text-xs ${TOOLBAR_NEUTRAL_BUTTON_CLASS}`}
+        onClick={() =>
+          canvasEventBus.publish('tool-dialog/open', {
+            nodeId: node.id,
+            toolType: tool.type,
+          })
+        }
+      >
+        <Icon className="h-3.5 w-3.5" />
+        {resolveToolLabel(tool.type)}
+      </UiChipButton>
+    );
+  };
+
   return (
     <ReactFlowNodeToolbar
       nodeId={node.id}
@@ -635,52 +668,10 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
       offset={NODE_TOOLBAR_OFFSET}
       className={NODE_TOOLBAR_CLASS}
     >
-      <UiPanel className="flex items-center gap-1 rounded-full p-1">
-        {!isImageEdit && tools.map((tool) => {
-          const Icon = toolIconMap[tool.icon] ?? Crop;
-
-          // immediate 工具（AI 去底）：点击即执行，不开工具对话框
-          if (tool.immediate) {
-            const isBusy = immediateToolBusy === tool.type;
-            return (
-              <UiChipButton
-                key={tool.type}
-                className={`h-8 ${TOOLBAR_BUTTON_RADIUS_CLASS} px-2.5 text-xs ${TOOLBAR_NEUTRAL_BUTTON_CLASS}`}
-                disabled={immediateToolBusy !== ''}
-                title={
-                  tool.type === NODE_TOOL_TYPES.aiBirefMatting
-                    ? t('aiBirefMatting.buttonTitle')
-                    : undefined
-                }
-                onClick={() => void handleImmediateTool(tool.type)}
-              >
-                {isBusy ? (
-                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Icon className="h-3.5 w-3.5" />
-                )}
-                {resolveToolLabel(tool.type)}
-              </UiChipButton>
-            );
-          }
-
-          return (
-            <UiChipButton
-              key={tool.type}
-              className={`h-8 ${TOOLBAR_BUTTON_RADIUS_CLASS} px-2.5 text-xs ${TOOLBAR_NEUTRAL_BUTTON_CLASS}`}
-              onClick={() =>
-                canvasEventBus.publish('tool-dialog/open', {
-                  nodeId: node.id,
-                  toolType: tool.type,
-                })
-              }
-            >
-              <Icon className="h-3.5 w-3.5" />
-              {resolveToolLabel(tool.type)}
-            </UiChipButton>
-          );
-        })}
-        {!isImageEdit && canReupload && (
+      <UiPanel className="flex flex-col items-center gap-1 rounded-full p-1">
+        <div className="flex items-center justify-center gap-1">
+          {!isImageEdit && otherTools.map((tool) => renderToolButton(tool))}
+          {!isImageEdit && canReupload && (
           <UiChipButton
             key="upload-reupload"
             className={`h-8 ${TOOLBAR_BUTTON_RADIUS_CLASS} px-2.5 text-xs ${TOOLBAR_NEUTRAL_BUTTON_CLASS}`}
@@ -692,22 +683,6 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
           >
             <RefreshCw className="h-3.5 w-3.5" />
             {t('nodeToolbar.reupload')}
-          </UiChipButton>
-        )}
-        {!isImageEdit && canHandleImage && (
-          <UiChipButton
-            key="image-copy"
-            className={`h-8 ${TOOLBAR_BUTTON_RADIUS_CLASS} px-2.5 text-xs ${TOOLBAR_NEUTRAL_BUTTON_CLASS} ${
-              isCopySuccess
-                ? '!border-emerald-400/70 !bg-emerald-500/20 !text-emerald-200 hover:!bg-emerald-500/30'
-                : ''
-            }`}
-            onClick={() => {
-              void handleCopyImage();
-            }}
-          >
-            <Copy className="h-3.5 w-3.5" />
-            {t('nodeToolbar.copy')}
           </UiChipButton>
         )}
         {!isImageEdit && canArchiveImage && (
@@ -832,6 +807,13 @@ export const NodeActionToolbar = memo(({ node }: NodeActionToolbarProps) => {
           <Trash2 className="h-3.5 w-3.5" />
           {t('common.delete')}
         </UiChipButton>
+        </div>
+        {/* 第二行：核心工具（裁剪 / AI 抠图 / AI 去底）；节点类型不支持时整行不渲染 */}
+        {!isImageEdit && coreTools.length > 0 && (
+          <div className="flex items-center justify-center gap-1">
+            {coreTools.map((tool) => renderToolButton(tool))}
+          </div>
+        )}
       </UiPanel>
 
       <UiModal
