@@ -935,6 +935,7 @@ async fn post_gpt_image_2_edit_request(
     output_size: &str,
     png_bytes: &[u8],
     response_format: Option<&str>,
+    model_name: &str,
 ) -> Result<Response, AIError> {
     let image_part = Part::bytes(png_bytes.to_vec())
         .file_name("image.png")
@@ -945,7 +946,7 @@ async fn post_gpt_image_2_edit_request(
         .text("prompt", prompt.to_string())
         .text("n", "1")
         .text("size", output_size.to_string())
-        .text("model", "gpt-image-2");
+        .text("model", model_name.to_string());
     let form = if let Some(format) = response_format {
         form.text("response_format", format.to_string())
     } else {
@@ -1195,6 +1196,11 @@ async fn submit_gpt_image_2_task(
     };
     let images = request.reference_images.as_deref().unwrap_or(&[]);
     let has_reference = !images.is_empty();
+    // 批次17：juyouapi gpt-image-2.5 系复用同一 OpenAI images 协议，模型名随请求透传
+    // （gpt-image-2 请求解析出的名字与原硬编码一致，线上字节不变；666api 分支零行为变化）。
+    let gpt_model_name = extract_model_name(&request.model)
+        .filter(|name| name.starts_with("gpt-image"))
+        .unwrap_or_else(|| "gpt-image-2".to_string());
 
     if has_reference {
         let endpoint = format!("{}/v1/images/edits", base_url);
@@ -1210,6 +1216,7 @@ async fn submit_gpt_image_2_task(
             output_size,
             &png_bytes,
             None,
+            &gpt_model_name,
         )
         .await?;
 
@@ -1232,7 +1239,7 @@ async fn submit_gpt_image_2_task(
         let endpoint = format!("{}/v1/images/generations", base_url);
         let resolved_size = resolve_openai_image_size(&request.size, &request.aspect_ratio);
         let body = json!({
-            "model": "gpt-image-2",
+            "model": gpt_model_name,
             "prompt": prompt,
             "n": 1,
             "size": resolved_size
@@ -1907,6 +1914,17 @@ impl AIProvider for Api666Provider {
                 format!("{}gemini-3.1-flash-image", prefix),
                 format!("{}gemini-3.1-flash-lite-image", prefix),
             ]
+        } else if self.provider_id == "juyouapi" {
+            // 批次17：juyouapi 独立清单——gpt-image-2.5 系 2026-09 真实 key smoke
+            // 实证可用（t2i/i2i 均 200 出图），与前端 models/image/juyouapi/ 清单一致。
+            vec![
+                format!("{}gemini-3.1-flash-image", prefix),
+                format!("{}gpt-image-2", prefix),
+                format!("{}gpt-image-2.5", prefix),
+                format!("{}gpt-image-2.5-flare", prefix),
+                format!("{}gpt-image-2.5-sunburst", prefix),
+                format!("{}wan2.6-i2v-flash", prefix),
+            ]
         } else {
             vec![
                 format!("{}gemini-3.1-flash-image", prefix),
@@ -1965,7 +1983,7 @@ impl AIProvider for Api666Provider {
             return Ok(ProviderTaskSubmission::Queued(handle));
         }
 
-        if model_name == "gpt-image-2" {
+        if model_name == "gpt-image-2" || model_name.starts_with("gpt-image-2.5") {
             let result =
                 submit_gpt_image_2_task(&self.client, &base_url, &api_key, &request).await?;
             if result.starts_with("http") || result.starts_with("data:") {
@@ -2161,7 +2179,7 @@ impl AIProvider for Api666Provider {
             return Err(AIError::Provider("Task pending too long".to_string()));
         }
 
-        if model_name == "gpt-image-2" {
+        if model_name == "gpt-image-2" || model_name.starts_with("gpt-image-2.5") {
             let result =
                 submit_gpt_image_2_task(&self.client, &base_url, &api_key, &request).await?;
             if result.starts_with("http") || result.starts_with("data:") {

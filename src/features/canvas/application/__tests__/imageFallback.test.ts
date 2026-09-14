@@ -26,9 +26,10 @@ describe('resolveAutoImageQuality 五值映射', () => {
   });
 });
 
-describe('CHAIN_MEMBER_MODEL_NAMES（批次13 R5）', () => {
-  it('包含 GPT 系三个新链成员裸模型名', () => {
+describe('CHAIN_MEMBER_MODEL_NAMES（批次13 R5 + 批次17 juyouapi gpt-image-2.5 系）', () => {
+  it('包含 GPT 系全部链成员裸模型名', () => {
     expect(CHAIN_MEMBER_MODEL_NAMES.has('gpt-image-2')).toBe(true);
+    expect(CHAIN_MEMBER_MODEL_NAMES.has('gpt-image-2.5')).toBe(true);
     expect(CHAIN_MEMBER_MODEL_NAMES.has('gpt-image-2.5-flare')).toBe(true);
     expect(CHAIN_MEMBER_MODEL_NAMES.has('gpt-image-2.5-sunburst')).toBe(true);
   });
@@ -55,14 +56,27 @@ describe('buildAutoImageFallback 空链防护档位化（批次13 R3）', () => 
     }
   });
 
-  it('gpt-standard / gpt-pro 只认 grsai（666api/juyouapi 有 key 也不入交）', () => {
-    const apiKeys = { '666api_default': 'test-key', juyouapi: 'test-key' };
+  it('只配 juyouapi key → GPT 三档位非 null（批次17：juyouapi 进 GPT 三链）', () => {
+    const apiKeys = { juyouapi: 'test-key' };
+    for (const modelId of [
+      AUTO_GPT_STANDARD_IMAGE_MODEL_ID,
+      AUTO_GPT_PRO_IMAGE_MODEL_ID,
+      AUTO_GPT_TRANSPARENT_IMAGE_MODEL_ID,
+    ]) {
+      const fallback = buildAutoImageFallback(modelId, apiKeys);
+      expect(fallback).not.toBeNull();
+      expect(fallback?.availableProviders).toEqual(['juyouapi']);
+    }
+  });
+
+  it('gpt-standard / gpt-pro 不认 666api（有 key 也不入交），gpt-transparent 三渠道含 666api/juyouapi', () => {
+    const apiKeys = { '666api_default': 'test-key' };
     expect(buildAutoImageFallback(AUTO_GPT_STANDARD_IMAGE_MODEL_ID, apiKeys)).toBeNull();
     expect(buildAutoImageFallback(AUTO_GPT_PRO_IMAGE_MODEL_ID, apiKeys)).toBeNull();
-    // gpt-transparent 三渠道：666api/juyouapi 有 key 即可成链
+    // gpt-transparent 三渠道：666api 有 key 即可成链
     const fallback = buildAutoImageFallback(AUTO_GPT_TRANSPARENT_IMAGE_MODEL_ID, apiKeys);
     expect(fallback).not.toBeNull();
-    expect(fallback?.availableProviders).toEqual(['666api', 'juyouapi']);
+    expect(fallback?.availableProviders).toEqual(['666api']);
     expect(fallback?.quality).toBe('gpt-transparent');
   });
 

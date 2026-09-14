@@ -835,3 +835,19 @@ decode 后链路升级为：**fillMaskHoles → upsampleMaskGuided → featherMa
 | `src/features/canvas/ui/tool-editors/AiMattingToolEditor.tsx` | runDecode 只发正点 + serverMaskRef 缓存；postProcess 抽出（负点本地重合成）；点变更 effect 重写（busy 补跑 + 双 sig 去重）；runEmbed 删显式 decode；画布负点清除圈（Circle）；modelDisplayName 删 vit_b |
 | `src/features/canvas/application/__tests__/aiMatting.test.ts` | 模型自适应 3 用例改写（vit_b 过滤）；+3 负点清除用例（半径口径/三区段清除/多点叠加） |
 | `src/i18n/locales/zh.json` / `en.json` | aiMatting.hint 语义更新；删 modelFine |
+
+## v0.4.8 · AI 抠图左右对比 + 左图缩放平移（2026-09-14，计划批准后小票执行）
+
+单画布预览整幅盖住原图（主体没点全就看不见）→ viewport 改双面板：左「原图 · 点选」（原图永不遮挡、点标记/清除圈/点击交互；滚轮锚点缩放钳 [fit,8×] + 拖拽平移 + 复位按钮，嵌套 Group 视图变换×fit 令 getImagePoint 零改动，标记尺寸 ÷viewScale 视觉恒定）；右「抠图预览」（只读，**镜像左图视图变换**保持逐像素对齐，规格原为静态 fit、实现时改为镜像属语义升级）。加点 onMouseDown→onClick（防拖拽误点）。tsc 0/npm 139/build ✓。dmg 已出。
+
+## v0.4.9 · 工具条双行 + 删复制按钮（2026-09-14，小票执行）
+
+NodeActionToolbar：删 image-copy 按钮+handleCopyImage+isCopySuccess+copyImageSourceToClipboard（全仓单引用，连 commands/image.ts 函数本体删除；Rust 命令未动）；分镜文案/复制报错/归档按钮不动。工具拆两行：**第二行核心 = 裁剪/AI 抠图/AI 去底（CORE_TOOL_IDS 用 NODE_TOOL_TYPES kebab-case 常量）**，第一行 = 其余工具+全部常驻按钮；组空不渲染空行；位置仍走 nodeToolbarConfig 零改动。i18n 删 nodeToolbar.copy。v0.4.9 已正式发版（commit 90e5aa9 + tag + CI 全绿 + GitHub Release exe）。
+
+## v0.4.10 · 巨游API 四个 gpt 系模型 smoke 实证 + 接入三条 GPT 链尾（2026-09-15）
+
+用户上游（juyouapi base=192.168.1.188:8317）新增四模型；**smoke 先行全绿**（/v1/models 34 模型在册；四模型 t2i 200/18-24s 同步 b64_json PNG 1254²；flare i2i 走 multipart /v1/images/edits 200/24.4s；**裸 base+/v1 直拼、同步无轮询**）→ 全部落地零跳过：
+
+- 前端 juyouapi 新增三卡（gptImage25/Flare/Sunburst，照 gptImage2.ts，提示词式透明 schema，9 比例 1K/2K/4K，**定价不设**）；imageFallback `GPT_SINGLE_CHAIN_PROVIDER_IDS` ['grsai']→['grsai','juyouapi']（GPT 标准档交集域，防只配巨游被空链挡）、CHAIN_MEMBER_MODEL_NAMES 补 gpt-image-2.5。
+- Rust：list_models 新增独立 juyouapi 分支（else 分支留给运行时 newapi 端点）；**submit_task/generate 两处路由闸门 `=="gpt-image-2"` 扩为「或 starts_with("gpt-image-2.5")」+ submit_gpt_image_2_task 模型名随请求透传**（规格外必要扩展：不扩则新模型全 ModelNotSupported；666api 线上字节不变）；chain.rs 三条 GPT 链尾各追加巨游 hop（STANDARD→flare、PRO→sunburst、TRANSPARENT→hop_transparent(gpt-image-2.5, 240)）+ 无 key 自动降级不变式锁。
+- cargo 82 / npm 140 全绿；key 仅用于 curl 未入仓。打包 0.4.10 走新流程：**open dmg 弹安装窗口即停**（不退旧版/不覆盖安装）。

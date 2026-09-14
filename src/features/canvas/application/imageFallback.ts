@@ -33,11 +33,12 @@ export const CHAIN_PROVIDER_IDS = ['grsai', 'aifast', '666api', 'juyouapi', 'kie
 
 /**
  * 批次13（R3）档位化链渠道：GPT 档位链成员渠道与 Gemini 五渠道全集不同——
- * gpt-transparent → grsai/666api/juyouapi；gpt-standard/pro → 仅 grsai。
+ * gpt-transparent → grsai/666api/juyouapi；gpt-standard/pro → grsai/juyouapi
+ * （批次17：juyouapi gpt-image-2.5 系 smoke 实证可用，进 GPT 三链尾部作降级备选）。
  * 空链防护按档位求交，交集空 → 返回 null（入口 ai.chainKeyRequired 拦截），绝不发占位 id。
  */
 export const GPT_TRANSPARENT_CHAIN_PROVIDER_IDS = ['grsai', '666api', 'juyouapi'] as const;
-export const GPT_SINGLE_CHAIN_PROVIDER_IDS = ['grsai'] as const;
+export const GPT_SINGLE_CHAIN_PROVIDER_IDS = ['grsai', 'juyouapi'] as const;
 
 /** 按档位取链成员渠道交集域（Gemini 档位维持五渠道全集，行为逐字节不变）。 */
 export function chainProviderIdsForQuality(quality: ImageAutoQuality): readonly string[] {
@@ -50,7 +51,7 @@ export function chainProviderIdsForQuality(quality: ImageAutoQuality): readonly 
   return CHAIN_PROVIDER_IDS;
 }
 
-/** 内置链成员裸模型名集合（批次8：NEWAPI 接口模型与之完全同名才允许入链）。批次13：GPT 系三模型入列。 */
+/** 内置链成员裸模型名集合（批次8：NEWAPI 接口模型与之完全同名才允许入链）。批次13：GPT 系三模型入列。批次17：juyouapi gpt-image-2.5 系入列。 */
 export const CHAIN_MEMBER_MODEL_NAMES: ReadonlySet<string> = new Set([
   'nano-banana-2', // grsai/kie
   'nano-banana-pro', // grsai（pro 链）
@@ -59,8 +60,9 @@ export const CHAIN_MEMBER_MODEL_NAMES: ReadonlySet<string> = new Set([
   'gemini-3.1-flash-image', // juyouapi
   'gemini-3-pro-image-preview', // aifast（批次10 pro 链）
   'gpt-image-2', // grsai/666api/juyouapi（批次13 透明链）
-  'gpt-image-2.5-flare', // grsai（批次13 gpt-standard 链）
-  'gpt-image-2.5-sunburst', // grsai（批次13 gpt-pro 链）
+  'gpt-image-2.5', // juyouapi（批次17 透明链尾部）
+  'gpt-image-2.5-flare', // grsai + juyouapi（gpt-standard 链）
+  'gpt-image-2.5-sunburst', // grsai + juyouapi（gpt-pro 链）
 ]);
 
 /** 判断某链渠道是否已配置 key（666api 按 gemini 分组 key 并回退 default）。 */

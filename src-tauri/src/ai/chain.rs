@@ -11,6 +11,8 @@
 //! - `666api/gemini-3.1-flash-image-preview`：前端 api666/gemini31FlashImagePreview.ts 与 Rust list_models 一致
 //! - `666api/gemini-3-pro-image`：前端 requestModel 实发名（api666 对任意 `666api/gemini-*` 前缀透传）
 //! - `juyouapi/gemini-3.1-flash-image`：前端与 Rust list_models 一致
+//! - `juyouapi/gpt-image-2.5` / `-flare` / `-sunburst`（批次17 进 GPT 三链尾）：
+//!   前端 models/image/juyouapi/ 与 Rust list_models 一致；真实 key smoke t2i/i2i 200 出图
 //! - `kie/nano-banana-2`：前端与 Rust list_models 一致
 //! - `aifast/gemini-3-pro-image-preview`（批次10 进链）：aifast 静态清单成员，真实 key smoke 实证可调
 //!
@@ -95,20 +97,30 @@ pub const CHAIN_I2I_STANDARD: &[HopSpec] = &[
     hop("kie", "kie/nano-banana-2", 300),
 ];
 
-/// 批次13 · GPT 标准·高速链：grsai gpt-image-2.5-flare 单档（主对话 smoke 17s 实证恢复）。
-pub const CHAIN_GPT_STANDARD: &[HopSpec] = &[hop("grsai", "grsai/gpt-image-2.5-flare", 300)];
+/// 批次13 · GPT 标准·高速链：grsai gpt-image-2.5-flare（主对话 smoke 17s 实证恢复）
+/// → 批次17 尾追加 juyouapi gpt-image-2.5-flare（真实 key smoke 200 出图，降级备选）。
+pub const CHAIN_GPT_STANDARD: &[HopSpec] = &[
+    hop("grsai", "grsai/gpt-image-2.5-flare", 300),
+    hop("juyouapi", "juyouapi/gpt-image-2.5-flare", 240),
+];
 
-/// 批次13 · GPT 高质量链：grsai gpt-image-2.5-sunburst 单档（smoke 18s 实证）。
-pub const CHAIN_GPT_PRO: &[HopSpec] = &[hop("grsai", "grsai/gpt-image-2.5-sunburst", 300)];
+/// 批次13 · GPT 高质量链：grsai gpt-image-2.5-sunburst（smoke 18s 实证）
+/// → 批次17 尾追加 juyouapi gpt-image-2.5-sunburst（真实 key smoke 200 出图，降级备选）。
+pub const CHAIN_GPT_PRO: &[HopSpec] = &[
+    hop("grsai", "grsai/gpt-image-2.5-sunburst", 300),
+    hop("juyouapi", "juyouapi/gpt-image-2.5-sunburst", 240),
+];
 
 /// 批次13 · GPT 透明底链：grsai gpt-image-2（原生 background=transparent 参数）
-/// → 666api / juyouapi gpt-image-2（提示词式透明兜底，见 api666 submit_gpt_image_2_task）。
-/// 三 hop 均带 transparent overlay（提交时合并 {"transparent_background": true} 进 extra_params；
+/// → 666api / juyouapi gpt-image-2（提示词式透明兜底，见 api666 submit_gpt_image_2_task）
+/// → 批次17 尾追加 juyouapi gpt-image-2.5（提示词式透明兜底，smoke 200 出图）。
+/// 各 hop 均带 transparent overlay（提交时合并 {"transparent_background": true} 进 extra_params；
 /// grsai 侧 request_generate 用 as_bool() 只认 bool，必须 Value::Bool 不是字符串）。
 pub const CHAIN_GPT_TRANSPARENT: &[HopSpec] = &[
     hop_transparent("grsai", "grsai/gpt-image-2", 300),
     hop_transparent("666api", "666api/gpt-image-2", 240),
     hop_transparent("juyouapi", "juyouapi/gpt-image-2", 240),
+    hop_transparent("juyouapi", "juyouapi/gpt-image-2.5", 240),
 ];
 
 /// 运行期 hop（chain_meta_json 落库形态的元素）。
@@ -1036,7 +1048,12 @@ mod tests {
         );
         assert_eq!(
             hop_models(&plan),
-            vec!["grsai/gpt-image-2", "666api/gpt-image-2", "juyouapi/gpt-image-2"]
+            vec![
+                "grsai/gpt-image-2",
+                "666api/gpt-image-2",
+                "juyouapi/gpt-image-2",
+                "juyouapi/gpt-image-2.5",
+            ]
         );
     }
 
@@ -1055,7 +1072,7 @@ mod tests {
             &registry,
             &[],
         );
-        assert_eq!(plan.hops.len(), 3);
+        assert_eq!(plan.hops.len(), 4);
         for hop in &plan.hops {
             let overlay = hop
                 .extra_params_overlay
@@ -1107,11 +1124,70 @@ mod tests {
 
     #[test]
     fn chain_member_names_include_gpt_models() {
-        // R5：三条新链成员裸模型名纳入同名准入集合
+        // R5：三条新链成员裸模型名纳入同名准入集合；批次17：juyouapi gpt-image-2.5 系入列
         let names = chain_member_bare_model_names();
         assert!(names.contains("gpt-image-2"));
+        assert!(names.contains("gpt-image-2.5"));
         assert!(names.contains("gpt-image-2.5-flare"));
         assert!(names.contains("gpt-image-2.5-sunburst"));
+    }
+
+    #[test]
+    fn gpt_chains_append_juyouapi_tail_and_degrade_without_its_key() {
+        // 批次17 链序锁：juyouapi 有 key → 三条 GPT 链尾部各追加一档 juyouapi 备选
+        let registry = registry_with(&["grsai", "666api", "juyouapi"]);
+        let available: Vec<String> = ["grsai", "666api", "juyouapi"]
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        let standard = build_chain(
+            &t2i_request("auto/gpt-standard"),
+            QUALITY_GPT_STANDARD,
+            &available,
+            &registry,
+            &[],
+        );
+        assert_eq!(
+            hop_models(&standard),
+            vec!["grsai/gpt-image-2.5-flare", "juyouapi/gpt-image-2.5-flare"]
+        );
+        let pro = build_chain(
+            &t2i_request("auto/gpt-pro"),
+            QUALITY_GPT_PRO,
+            &available,
+            &registry,
+            &[],
+        );
+        assert_eq!(
+            hop_models(&pro),
+            vec!["grsai/gpt-image-2.5-sunburst", "juyouapi/gpt-image-2.5-sunburst"]
+        );
+        // juyouapi 无 key（registry 有但 available 快照无）→ 三条 GPT 链自动降级为 grsai 单 hop
+        let grsai_only = vec!["grsai".to_string()];
+        let standard = build_chain(
+            &t2i_request("auto/gpt-standard"),
+            QUALITY_GPT_STANDARD,
+            &grsai_only,
+            &registry,
+            &[],
+        );
+        assert_eq!(hop_models(&standard), vec!["grsai/gpt-image-2.5-flare"]);
+        let pro = build_chain(
+            &t2i_request("auto/gpt-pro"),
+            QUALITY_GPT_PRO,
+            &grsai_only,
+            &registry,
+            &[],
+        );
+        assert_eq!(hop_models(&pro), vec!["grsai/gpt-image-2.5-sunburst"]);
+        let transparent = build_chain(
+            &t2i_request("auto/gpt-transparent"),
+            QUALITY_GPT_TRANSPARENT,
+            &grsai_only,
+            &registry,
+            &[],
+        );
+        assert_eq!(hop_models(&transparent), vec!["grsai/gpt-image-2"]);
     }
 
     #[test]
