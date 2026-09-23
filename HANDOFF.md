@@ -851,3 +851,11 @@ NodeActionToolbar：删 image-copy 按钮+handleCopyImage+isCopySuccess+copyImag
 - 前端 juyouapi 新增三卡（gptImage25/Flare/Sunburst，照 gptImage2.ts，提示词式透明 schema，9 比例 1K/2K/4K，**定价不设**）；imageFallback `GPT_SINGLE_CHAIN_PROVIDER_IDS` ['grsai']→['grsai','juyouapi']（GPT 标准档交集域，防只配巨游被空链挡）、CHAIN_MEMBER_MODEL_NAMES 补 gpt-image-2.5。
 - Rust：list_models 新增独立 juyouapi 分支（else 分支留给运行时 newapi 端点）；**submit_task/generate 两处路由闸门 `=="gpt-image-2"` 扩为「或 starts_with("gpt-image-2.5")」+ submit_gpt_image_2_task 模型名随请求透传**（规格外必要扩展：不扩则新模型全 ModelNotSupported；666api 线上字节不变）；chain.rs 三条 GPT 链尾各追加巨游 hop（STANDARD→flare、PRO→sunburst、TRANSPARENT→hop_transparent(gpt-image-2.5, 240)）+ 无 key 自动降级不变式锁。
 - cargo 82 / npm 140 全绿；key 仅用于 curl 未入仓。打包 0.4.10 走新流程：**open dmg 弹安装窗口即停**（不退旧版/不覆盖安装）。
+
+## v0.4.11 · GRSAI 添加裸 gpt-image-2.5（2026-09-22）
+
+用户上游确认：grsai 的 flare/sunburst 均维护中，裸 `gpt-image-2.5` 可用，要求添加。改动极小（1 新文件 + 1 Rust 文件）：
+
+- 前端 `models/image/grsai/gptImage25.ts` 新增：照 flare 卡同构（id='grsai/gpt-image-2.5'、13 比例×1K/2K/4K、quality 五档复用 `GRSAI_GPT25_QUALITY_KEY`、透明底 `transparent_background` 照 gpt-image-2 卡样式、**定价不设**——官方点数未知宁缺毋错）。registry eager glob 自动注册零接线。
+- Rust `grsai/mod.rs`：SUPPORTED_MODELS 10→11、list_models +1；**normalize_requested_model 核实零改动**——`grsai_gpt_class` 用 `starts_with("gpt-image-2.5")` 前缀判断，裸 2.5 天然命中 multi 三档表（GRSAI_GPT_PX）+ quality 白名单 + 透传（不会被 nano 归一化改写）。gpt_class_dispatch 测试补裸模型断言。
+- 红线：不加链（grsai gpt 慢线铁律，仅专家单点）、flare/sunburst/gpt-image-2 零改动、报价锁不含裸 2.5 未动。cargo 82 / npm 140 全绿。dmg 0.4.11 新流程弹窗交付。

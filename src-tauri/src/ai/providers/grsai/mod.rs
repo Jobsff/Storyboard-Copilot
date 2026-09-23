@@ -22,7 +22,7 @@ const DEFAULT_BASE_URL: &str = "https://grsai.dakka.com.cn";
 const DEFAULT_PRO_MODEL: &str = "nano-banana-pro";
 const POLL_INTERVAL_MS: u64 = 2000;
 
-const SUPPORTED_MODELS: [&str; 10] = [
+const SUPPORTED_MODELS: [&str; 11] = [
     "nano-banana-2",
     "nano-banana-pro",
     "nano-banana-pro-vt",
@@ -32,6 +32,8 @@ const SUPPORTED_MODELS: [&str; 10] = [
     "grsai/nano-banana-pro",
     // gpt 系（批次9）：/v1/api/generate 路径
     "gpt-image-2",
+    // 裸 gpt-image-2.5：命中 grsai_gpt_class 的 2.5 前缀 → multi 三档像素表
+    "gpt-image-2.5",
     "gpt-image-2.5-flare",
     "gpt-image-2.5-sunburst",
 ];
@@ -596,6 +598,7 @@ impl AIProvider for GrsaiProvider {
             "grsai/nano-banana-pro".to_string(),
             // gpt 系（批次9）
             "grsai/gpt-image-2".to_string(),
+            "grsai/gpt-image-2.5".to_string(),
             "grsai/gpt-image-2.5-flare".to_string(),
             "grsai/gpt-image-2.5-sunburst".to_string(),
         ]
@@ -695,8 +698,11 @@ mod tests {
     fn gpt_class_dispatch() {
         assert_eq!(grsai_gpt_class("gpt-image-2"), Some("single"));
         assert_eq!(grsai_gpt_class("GPT-Image-2.5-Flare"), Some("multi"));
+        // 裸 gpt-image-2.5：2.5 前缀命中 multi 三档像素表
+        assert_eq!(grsai_gpt_class("gpt-image-2.5"), Some("multi"));
         assert_eq!(grsai_gpt_class("nano-banana-2"), None);
         assert!(is_gpt_model("gpt-image-2.5-sunburst"));
+        assert!(is_gpt_model("gpt-image-2.5"));
         assert!(!is_gpt_model("nano-banana-pro"));
     }
 
